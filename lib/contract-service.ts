@@ -141,7 +141,9 @@ export class ContractService {
     price: string,
     deliveryTime: string,
     requirements: string,
-    tags: string[]
+    tags: string[],
+    network: string = "hedera-testnet",
+    paymentToken: string = "native"
   ): Promise<ethers.TransactionResponse> {
     const contractWithSigner = await this.getContractWithSigner()
     
@@ -149,7 +151,7 @@ export class ContractService {
       const priceInWei = ethers.parseEther(price)
       
       // Combine all fields into description since contract only takes title, description, price
-      const fullDescription = `${description}\n\nCategory: ${category}\nDelivery Time: ${deliveryTime}\nRequirements: ${requirements}\nTags: ${tags.join(', ')}`
+      const fullDescription = `${description}\n\nCategory: ${category}\nDelivery Time: ${deliveryTime}\nRequirements: ${requirements}\nTags: ${tags.join(', ')}\nNetwork: ${network}\nPayment Token: ${paymentToken}`
       
       return await contractWithSigner.createGig(
         title,
@@ -179,6 +181,8 @@ export class ContractService {
       let deliveryTime = "1 week"
       let requirements = ""
       let tags: string[] = []
+      let network = "hedera-testnet"
+      let paymentToken = "native"
       
       if (descParts.length > 1) {
         const metadata = descParts[1]
@@ -186,11 +190,15 @@ export class ContractService {
         const deliveryMatch = metadata.match(/Delivery Time: (.+)/)
         const requirementsMatch = metadata.match(/Requirements: (.+)/)
         const tagsMatch = metadata.match(/Tags: (.+)/)
+        const networkMatch = metadata.match(/Network: (.+)/)
+        const paymentTokenMatch = metadata.match(/Payment Token: (.+)/)
         
-        if (categoryMatch) category = categoryMatch[1]
-        if (deliveryMatch) deliveryTime = deliveryMatch[1]
-        if (requirementsMatch) requirements = requirementsMatch[1]
-        if (tagsMatch) tags = tagsMatch[1].split(', ').filter(tag => tag.trim())
+        if (categoryMatch) category = categoryMatch[1].split('\n')[0]
+        if (deliveryMatch) deliveryTime = deliveryMatch[1].split('\n')[0]
+        if (requirementsMatch) requirements = requirementsMatch[1].split('\n')[0]
+        if (tagsMatch) tags = tagsMatch[1].split('\n')[0].split(', ').filter(tag => tag.trim())
+        if (networkMatch) network = networkMatch[1].split('\n')[0]
+        if (paymentTokenMatch) paymentToken = paymentTokenMatch[1].split('\n')[0]
       }
       
       return {
@@ -204,7 +212,9 @@ export class ContractService {
         requirements: requirements,
         tags: tags,
         active: gig.isActive,
-        createdAt: new Date() // Contract doesn't store creation timestamp
+        createdAt: new Date(), // Contract doesn't store creation timestamp
+        network: network,
+        paymentToken: paymentToken
       }
     } catch (error) {
       console.error("Error getting gig:", error)

@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { Plus, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { contractService } from "@/lib/contract-service"
-import { CreateGigData, GIG_CATEGORIES, DELIVERY_OPTIONS } from "@/types/gig"
+import { CreateGigData, GIG_CATEGORIES, DELIVERY_OPTIONS, SUPPORTED_NETWORKS, Token } from "@/types/gig"
 import { ProtectedRoute } from "@/components/protected-route"
 
 export default function PostGigPage() {
@@ -28,17 +28,37 @@ export default function PostGigPage() {
     category: "",
     price: "",
     deliveryTime: "",
-    requirements: ""
+    requirements: "",
+    network: "hedera-testnet", // Default to Hedera testnet
+    paymentToken: "native" // Default to native HBAR
   })
 
   const categories = GIG_CATEGORIES
   const deliveryOptions = DELIVERY_OPTIONS
+  
+  // Get current network and its supported tokens
+  const selectedNetwork = SUPPORTED_NETWORKS.find(n => n.id === formData.network)
+  const availableTokens = selectedNetwork?.supportedTokens || []
+  const selectedToken = availableTokens.find(t => t.address === formData.paymentToken)
 
   const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }))
+    setFormData(prev => {
+      // If network changes, reset payment token to first available token
+      if (field === 'network') {
+        const newNetwork = SUPPORTED_NETWORKS.find(n => n.id === value)
+        const firstToken = newNetwork?.supportedTokens[0]
+        return {
+          ...prev,
+          [field]: value,
+          paymentToken: firstToken?.address || "native"
+        }
+      }
+      
+      return {
+        ...prev,
+        [field]: value
+      }
+    })
   }
 
   const addTag = () => {
@@ -58,7 +78,7 @@ export default function PostGigPage() {
 
     try {
       // Validate form
-      if (!formData.title || !formData.description || !formData.category || !formData.price) {
+      if (!formData.title || !formData.description || !formData.category || !formData.price || !formData.network || !formData.paymentToken) {
         throw new Error("Please fill in all required fields")
       }
 
@@ -74,7 +94,9 @@ export default function PostGigPage() {
         formData.price,
         formData.deliveryTime || "1 week",
         formData.requirements,
-        tags
+        tags,
+        formData.network,
+        formData.paymentToken
       )
 
       toast({
@@ -98,7 +120,9 @@ export default function PostGigPage() {
           category: "",
           price: "",
           deliveryTime: "",
-          requirements: ""
+          requirements: "",
+          network: "hedera-testnet",
+          paymentToken: "native"
         })
         setTags([])
       } else {
@@ -178,8 +202,42 @@ export default function PostGigPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
+                    <Label htmlFor="network">Network *</Label>
+                    <Select value={formData.network} onValueChange={(value) => handleInputChange("network", value)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a network" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SUPPORTED_NETWORKS.map((network) => (
+                          <SelectItem key={network.id} value={network.id}>
+                            {network.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="paymentToken">Payment Token *</Label>
+                    <Select value={formData.paymentToken} onValueChange={(value) => handleInputChange("paymentToken", value)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select payment token" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableTokens.map((token) => (
+                          <SelectItem key={token.address} value={token.address}>
+                            {token.symbol} - {token.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
                     <Label htmlFor="category">Category *</Label>
-                    <Select onValueChange={(value) => handleInputChange("category", value)}>
+                    <Select value={formData.category} onValueChange={(value) => handleInputChange("category", value)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select a category" />
                       </SelectTrigger>
@@ -194,11 +252,11 @@ export default function PostGigPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="price">Price (HBAR) *</Label>
+                    <Label htmlFor="price">Price ({selectedToken?.symbol || 'Token'}) *</Label>
                     <Input
                       id="price"
                       type="number"
-                      step="0.01"
+                      step={selectedToken?.decimals === 6 ? "0.01" : "0.01"}
                       min="0"
                       placeholder="50.00"
                       value={formData.price}
@@ -209,7 +267,7 @@ export default function PostGigPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="deliveryTime">Delivery Time</Label>
-                  <Select onValueChange={(value) => handleInputChange("deliveryTime", value)}>
+                  <Select value={formData.deliveryTime} onValueChange={(value) => handleInputChange("deliveryTime", value)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select delivery time" />
                     </SelectTrigger>
