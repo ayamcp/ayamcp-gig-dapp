@@ -1,45 +1,48 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Star, Clock } from "lucide-react"
-
-const mockGigs = [
-  {
-    id: 1,
-    title: "Smart Contract Development",
-    description: "I will develop secure and efficient smart contracts for your DeFi project",
-    price: "0.5 ETH",
-    rating: 4.9,
-    reviews: 127,
-    deliveryTime: "3 days",
-    seller: "0x1234...5678",
-    tags: ["Solidity", "DeFi", "Smart Contracts"],
-  },
-  {
-    id: 2,
-    title: "Web3 Frontend Development",
-    description: "I will create responsive dApp interfaces with wallet integration",
-    price: "0.3 ETH",
-    rating: 4.8,
-    reviews: 89,
-    deliveryTime: "5 days",
-    seller: "0x9876...4321",
-    tags: ["React", "Web3", "Frontend"],
-  },
-  {
-    id: 3,
-    title: "NFT Collection Design",
-    description: "I will design unique NFT collections with metadata and rarity traits",
-    price: "0.2 ETH",
-    rating: 4.7,
-    reviews: 156,
-    deliveryTime: "7 days",
-    seller: "0x5555...9999",
-    tags: ["NFT", "Design", "Art"],
-  },
-]
+import { Star, Clock, Loader2 } from "lucide-react"
+import { contractService } from "@/lib/contract-service"
+import { Gig } from "@/types/gig"
 
 export function FeaturedGigs() {
+  const [gigs, setGigs] = useState<Gig[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    loadFeaturedGigs()
+  }, [])
+
+  const loadFeaturedGigs = async () => {
+    try {
+      const activeGigIds = await contractService.getAllActiveGigs()
+      const gigsData = await Promise.all(
+        activeGigIds.slice(0, 6).map(async (id) => {
+          try {
+            return await contractService.getGig(id)
+          } catch (error) {
+            console.error(`Error loading gig ${id}:`, error)
+            return null
+          }
+        })
+      )
+      
+      const validGigs = gigsData.filter((gig): gig is Gig => gig !== null)
+      setGigs(validGigs)
+    } catch (error) {
+      console.error("Error loading featured gigs:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const formatAddress = (address: string) => {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`
+  }
+
   return (
     <section className="py-16 px-4 bg-muted/30">
       <div className="container max-w-6xl mx-auto">
@@ -50,45 +53,68 @@ export function FeaturedGigs() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {mockGigs.map((gig) => (
-            <Card key={gig.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <h3 className="font-semibold text-lg line-clamp-2">{gig.title}</h3>
-                  <Badge variant="secondary">{gig.price}</Badge>
-                </div>
-                <p className="text-sm text-muted-foreground line-clamp-2">{gig.description}</p>
-              </CardHeader>
+        {isLoading ? (
+          <div className="flex justify-center">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        ) : gigs.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-muted-foreground">No gigs available yet. Be the first to post one!</p>
+            <Button className="mt-4" asChild>
+              <a href="/post-gig">Post Your First Gig</a>
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {gigs.map((gig) => (
+              <Card key={gig.id} className="hover:shadow-lg transition-shadow">
+                <CardHeader>
+                  <div className="flex items-start justify-between">
+                    <h3 className="font-semibold text-lg line-clamp-2">{gig.title}</h3>
+                    <Badge variant="secondary">{gig.price} HBAR</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{gig.description}</p>
+                  <div className="text-xs text-muted-foreground">
+                    by {formatAddress(gig.seller)}
+                  </div>
+                </CardHeader>
 
-              <CardContent>
-                <div className="flex flex-wrap gap-1 mb-4">
-                  {gig.tags.map((tag) => (
-                    <Badge key={tag} variant="outline" className="text-xs">
-                      {tag}
+                <CardContent>
+                  <div className="flex flex-wrap gap-1 mb-4">
+                    <Badge variant="outline" className="text-xs">
+                      {gig.category}
                     </Badge>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-1">
-                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                    <span className="font-medium">{gig.rating}</span>
-                    <span className="text-muted-foreground">({gig.reviews})</span>
+                    {gig.tags.slice(0, 2).map((tag) => (
+                      <Badge key={tag} variant="outline" className="text-xs">
+                        {tag}
+                      </Badge>
+                    ))}
+                    {gig.tags.length > 2 && (
+                      <Badge variant="outline" className="text-xs">
+                        +{gig.tags.length - 2} more
+                      </Badge>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1 text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span>{gig.deliveryTime}</span>
-                  </div>
-                </div>
-              </CardContent>
 
-              <CardFooter>
-                <Button className="w-full">View Details</Button>
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-1">
+                      <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                      <span className="font-medium">New</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="h-4 w-4" />
+                      <span>{gig.deliveryTime}</span>
+                    </div>
+                  </div>
+                </CardContent>
+
+                <CardFooter>
+                  <Button className="w-full">View Details</Button>
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   )
