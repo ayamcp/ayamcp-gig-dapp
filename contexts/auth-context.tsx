@@ -1,6 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { switchToHederaNetwork, HEDERA_TESTNET_CONFIG } from "@/lib/hedera-config"
 
 interface UserProfile {
   address: string
@@ -22,6 +23,8 @@ interface AuthContextType {
   disconnectWallet: () => void
   updateProfile: (profile: Partial<UserProfile>) => void
   isLoading: boolean
+  isOnHederaNetwork: boolean
+  switchToHedera: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -31,6 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [address, setAddress] = useState<string>("")
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isOnHederaNetwork, setIsOnHederaNetwork] = useState(false)
 
   useEffect(() => {
     checkConnection()
@@ -38,12 +42,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Listen for account changes
     if (typeof window !== "undefined" && window.ethereum) {
       window.ethereum.on("accountsChanged", handleAccountsChanged)
-      window.ethereum.on("chainChanged", () => window.location.reload())
+      window.ethereum.on("chainChanged", handleChainChanged)
     }
 
     return () => {
       if (typeof window !== "undefined" && window.ethereum) {
         window.ethereum.removeListener("accountsChanged", handleAccountsChanged)
+        window.ethereum.removeListener("chainChanged", handleChainChanged)
       }
     }
   }, [])
@@ -57,10 +62,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const checkConnection = async () => {
-    setIsLoading(true)
+  const handleChainChanged = () => {
+    checkNetworkAndConnection()
+  }
+
+  const checkNetworkAndConnection = async () => {
     if (typeof window !== "undefined" && window.ethereum) {
       try {
+        const chainId = await window.ethereum.request({ method: "eth_chainId" })
+        const hederaChainId = `0x${HEDERA_TESTNET_CONFIG.chainId.toString(16)}`
+        setIsOnHederaNetwork(chainId === hederaChainId)
+        
         const accounts = await window.ethereum.request({ method: "eth_accounts" })
         if (accounts.length > 0) {
           setIsConnected(true)
@@ -68,9 +80,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await loadUserProfile(accounts[0])
         }
       } catch (error) {
-        console.error("Error checking wallet connection:", error)
+        console.error("Error checking network and connection:", error)
+        setIsOnHederaNetwork(false)
       }
     }
+  }
+
+  const checkConnection = async () => {
+    setIsLoading(true)
+    await checkNetworkAndConnection()
     setIsLoading(false)
   }
 
@@ -101,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setIsConnected(true)
           setAddress(accounts[0])
           await loadUserProfile(accounts[0])
+          await checkNetworkAndConnection()
         }
       } catch (error) {
         console.error("Error connecting wallet:", error)
@@ -111,10 +130,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const switchToHedera = async () => {
+    try {
+      await switchToHederaNetwork()
+      await checkNetworkAndConnection()
+    } catch (error) {
+      console.error("Error switching to Hedera:", error)
+      throw error
+    }
+  }
+
   const disconnectWallet = () => {
     setIsConnected(false)
     setAddress("")
     setUserProfile(null)
+    setIsOnHederaNetwork(false)
   }
 
   const updateProfile = (profileUpdates: Partial<UserProfile>) => {
@@ -135,6 +165,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         disconnectWallet,
         updateProfile,
         isLoading,
+        isOnHederaNetwork,
+        switchToHedera,
       }}
     >
       {children}
