@@ -4,9 +4,9 @@ import { getHederaProvider, getHederaSigner, CONTRACT_ADDRESS } from "./hedera-c
 // Gig Marketplace Contract ABI - Based on actual deployed contract
 const CONTRACT_ABI = [
   // Core gig functions
-  "function createGig(string memory _title, string memory _description, uint256 _price)",
-  "function getGig(uint256 _gigId) view returns (tuple(uint256 id, address provider, string title, string description, uint256 price, bool isActive, bool isCompleted))",
-  "function updateGig(uint256 _gigId, string memory _title, string memory _description, uint256 _price)",
+  "function createGig(string memory _title, string memory _description, uint256 _price, address _token)",
+  "function getGig(uint256 _gigId) view returns (tuple(uint256 id, address provider, string title, string description, uint256 price, bool isActive, bool isCompleted, address token))",
+  "function updateGig(uint256 _gigId, string memory _title, string memory _description, uint256 _price, address _token)",
   "function deactivateGig(uint256 _gigId)",
   
   // Order functions
@@ -153,10 +153,14 @@ export class ContractService {
       // Combine all fields into description since contract only takes title, description, price
       const fullDescription = `${description}\n\nCategory: ${category}\nDelivery Time: ${deliveryTime}\nRequirements: ${requirements}\nTags: ${tags.join(', ')}\nNetwork: ${network}\nPayment Token: ${paymentToken}`
       
+      // For native token payments, use zero address
+      const tokenAddress = paymentToken === "native" ? "0x0000000000000000000000000000000000000000" : paymentToken
+      
       return await contractWithSigner.createGig(
         title,
         fullDescription,
-        priceInWei
+        priceInWei,
+        tokenAddress
       )
     } catch (error: any) {
       console.error("Contract error:", error)
@@ -262,10 +266,11 @@ export class ContractService {
     }
   }
 
-  async updateGig(gigId: number, title: string, description: string, price: string): Promise<ethers.TransactionResponse> {
+  async updateGig(gigId: number, title: string, description: string, price: string, paymentToken: string = "native"): Promise<ethers.TransactionResponse> {
     const contractWithSigner = await this.getContractWithSigner()
     const priceInWei = ethers.parseEther(price)
-    return await contractWithSigner.updateGig(gigId, title, description, priceInWei)
+    const tokenAddress = paymentToken === "native" ? "0x0000000000000000000000000000000000000000" : paymentToken
+    return await contractWithSigner.updateGig(gigId, title, description, priceInWei, tokenAddress)
   }
 
   async deactivateGig(gigId: number): Promise<ethers.TransactionResponse> {
