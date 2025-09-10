@@ -4,12 +4,17 @@ import { useEffect, useState } from "react"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Star, Clock, Loader2 } from "lucide-react"
+import { Star, Clock, Loader2, QrCode } from "lucide-react"
+import Link from "next/link"
 import { contractService } from "@/lib/contract-service"
 import { Gig } from "@/types/gig"
+import { GigDetailsModal } from "@/components/gig-details-modal"
 
 export function FeaturedGigs() {
   const [gigs, setGigs] = useState<Gig[]>([])
+  const [gigOrderCounts, setGigOrderCounts] = useState<{[key: string]: number}>({})
+  const [selectedGig, setSelectedGig] = useState<Gig | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -32,6 +37,21 @@ export function FeaturedGigs() {
       
       const validGigs = gigsData.filter((gig): gig is Gig => gig !== null)
       setGigs(validGigs)
+
+      // Load order counts for each gig
+      const orderCounts: {[key: string]: number} = {}
+      await Promise.all(
+        validGigs.map(async (gig) => {
+          try {
+            const count = await contractService.getActiveOrdersCount(parseInt(gig.id))
+            orderCounts[gig.id] = count
+          } catch (error) {
+            console.error(`Error loading order count for gig ${gig.id}:`, error)
+            orderCounts[gig.id] = 0
+          }
+        })
+      )
+      setGigOrderCounts(orderCounts)
     } catch (error) {
       console.error("Error loading featured gigs:", error)
     } finally {
@@ -41,6 +61,16 @@ export function FeaturedGigs() {
 
   const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`
+  }
+
+  const handleViewDetails = (gig: Gig) => {
+    setSelectedGig(gig)
+    setIsModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false)
+    setSelectedGig(null)
   }
 
   return (
@@ -71,7 +101,14 @@ export function FeaturedGigs() {
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <h3 className="font-semibold text-lg line-clamp-2">{gig.title}</h3>
-                    <Badge variant="secondary">{gig.price} HBAR</Badge>
+                    <div className="flex flex-col gap-1 items-end">
+                      <Badge variant="secondary">{gig.price} HBAR</Badge>
+                      {gigOrderCounts[gig.id] > 0 && (
+                        <Badge variant="outline" className="text-xs">
+                          {gigOrderCounts[gig.id]} active order{gigOrderCounts[gig.id] !== 1 ? 's' : ''}
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <p className="text-sm text-muted-foreground line-clamp-2">{gig.description}</p>
                   <div className="text-xs text-muted-foreground">
@@ -108,13 +145,33 @@ export function FeaturedGigs() {
                   </div>
                 </CardContent>
 
-                <CardFooter>
-                  <Button className="w-full">View Details</Button>
+                <CardFooter className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    className="flex-1"
+                    onClick={() => handleViewDetails(gig)}
+                  >
+                    View Details
+                  </Button>
+                  <Button asChild className="flex-1">
+                    <Link href={`/payment/${gig.id}`}>
+                      <QrCode className="h-4 w-4 mr-2" />
+                      Pay Now
+                    </Link>
+                  </Button>
                 </CardFooter>
               </Card>
             ))}
           </div>
         )}
+
+        {/* Gig Details Modal */}
+        <GigDetailsModal
+          gig={selectedGig}
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          activeOrdersCount={selectedGig ? gigOrderCounts[selectedGig.id] || 0 : 0}
+        />
       </div>
     </section>
   )

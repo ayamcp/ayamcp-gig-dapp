@@ -8,13 +8,18 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Search, Filter, Star, Clock, Loader2, Grid, List } from "lucide-react"
+import { Search, Filter, Star, Clock, Loader2, Grid, List, QrCode } from "lucide-react"
+import Link from "next/link"
 import { contractService } from "@/lib/contract-service"
 import { Gig, GIG_CATEGORIES } from "@/types/gig"
+import { GigDetailsModal } from "@/components/gig-details-modal"
 
 export default function BrowsePage() {
   const [gigs, setGigs] = useState<Gig[]>([])
   const [filteredGigs, setFilteredGigs] = useState<Gig[]>([])
+  const [gigOrderCounts, setGigOrderCounts] = useState<{[key: string]: number}>({})
+  const [selectedGig, setSelectedGig] = useState<Gig | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
@@ -47,6 +52,21 @@ export default function BrowsePage() {
       
       const validGigs = gigsData.filter((gig): gig is Gig => gig !== null)
       setGigs(validGigs)
+
+      // Load order counts for each gig
+      const orderCounts: {[key: string]: number} = {}
+      await Promise.all(
+        validGigs.map(async (gig) => {
+          try {
+            const count = await contractService.getActiveOrdersCount(parseInt(gig.id))
+            orderCounts[gig.id] = count
+          } catch (error) {
+            console.error(`Error loading order count for gig ${gig.id}:`, error)
+            orderCounts[gig.id] = 0
+          }
+        })
+      )
+      setGigOrderCounts(orderCounts)
     } catch (error) {
       console.error("Error loading gigs:", error)
     } finally {
@@ -103,6 +123,16 @@ export default function BrowsePage() {
     setPriceFilter("all")
   }
 
+  const handleViewDetails = (gig: Gig) => {
+    setSelectedGig(gig)
+    setIsModalOpen(true)
+  }
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false)
+    setSelectedGig(null)
+  }
+
   const GridView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {filteredGigs.map((gig) => (
@@ -110,7 +140,14 @@ export default function BrowsePage() {
           <CardHeader>
             <div className="flex items-start justify-between">
               <h3 className="font-semibold text-lg line-clamp-2">{gig.title}</h3>
-              <Badge variant="secondary">{gig.price} HBAR</Badge>
+              <div className="flex flex-col gap-1 items-end">
+                <Badge variant="secondary">{gig.price} HBAR</Badge>
+                {gigOrderCounts[gig.id] > 0 && (
+                  <Badge variant="outline" className="text-xs">
+                    {gigOrderCounts[gig.id]} active order{gigOrderCounts[gig.id] !== 1 ? 's' : ''}
+                  </Badge>
+                )}
+              </div>
             </div>
             <p className="text-sm text-muted-foreground line-clamp-2">{gig.description}</p>
             <div className="text-xs text-muted-foreground">
@@ -147,8 +184,20 @@ export default function BrowsePage() {
             </div>
           </CardContent>
 
-          <CardFooter>
-            <Button className="w-full">View Details</Button>
+          <CardFooter className="flex gap-2">
+            <Button 
+              variant="outline" 
+              className="flex-1"
+              onClick={() => handleViewDetails(gig)}
+            >
+              View Details
+            </Button>
+            <Button asChild className="flex-1">
+              <Link href={`/payment/${gig.id}`}>
+                <QrCode className="h-4 w-4 mr-2" />
+                Pay Now
+              </Link>
+            </Button>
           </CardFooter>
         </Card>
       ))}
@@ -163,9 +212,16 @@ export default function BrowsePage() {
             <div className="flex-1 p-6">
               <div className="flex items-start justify-between mb-2">
                 <h3 className="font-semibold text-xl">{gig.title}</h3>
-                <Badge variant="secondary" className="text-lg px-3 py-1">
-                  {gig.price} HBAR
-                </Badge>
+                <div className="flex flex-col gap-1 items-end">
+                  <Badge variant="secondary" className="text-lg px-3 py-1">
+                    {gig.price} HBAR
+                  </Badge>
+                  {gigOrderCounts[gig.id] > 0 && (
+                    <Badge variant="outline" className="text-xs">
+                      {gigOrderCounts[gig.id]} active order{gigOrderCounts[gig.id] !== 1 ? 's' : ''}
+                    </Badge>
+                  )}
+                </div>
               </div>
               
               <p className="text-muted-foreground mb-4 line-clamp-2">
@@ -184,7 +240,20 @@ export default function BrowsePage() {
                   </div>
                 </div>
                 
-                <Button>View Details</Button>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline"
+                    onClick={() => handleViewDetails(gig)}
+                  >
+                    View Details
+                  </Button>
+                  <Button asChild>
+                    <Link href={`/payment/${gig.id}`}>
+                      <QrCode className="h-4 w-4 mr-2" />
+                      Pay Now
+                    </Link>
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -315,6 +384,14 @@ export default function BrowsePage() {
             {viewMode === "grid" ? <GridView /> : <ListView />}
           </>
         )}
+
+        {/* Gig Details Modal */}
+        <GigDetailsModal
+          gig={selectedGig}
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          activeOrdersCount={selectedGig ? gigOrderCounts[selectedGig.id] || 0 : 0}
+        />
       </main>
       <Footer />
     </div>

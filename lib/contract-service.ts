@@ -24,6 +24,7 @@ const CONTRACT_ABI = [
   "function withdrawPlatformFees()",
   "function pause()",
   "function unpause()",
+  "function paused() view returns (bool)",
   
   // State variables
   "function nextGigId() view returns (uint256)",
@@ -57,67 +58,67 @@ export class ContractService {
   }
 
   async getContractName(): Promise<string> {
-    if (!this.contract) throw new Error("Contract not initialized")
-    try {
-      return await this.contract.name()
-    } catch (error) {
-      console.error("Error getting contract name:", error)
-      return "Unknown"
-    }
+    // GigMarketplace doesn't have a name function, return a static name
+    return "Gig Marketplace"
   }
 
   async getContractSymbol(): Promise<string> {
-    if (!this.contract) throw new Error("Contract not initialized")
-    try {
-      return await this.contract.symbol()
-    } catch (error) {
-      console.error("Error getting contract symbol:", error)
-      return "UNKNOWN"
-    }
+    // GigMarketplace doesn't have a symbol, return marketplace identifier
+    return "MARKETPLACE"
   }
 
-  async getTotalSupply(): Promise<string> {
+  async getTotalGigs(): Promise<string> {
     if (!this.contract) throw new Error("Contract not initialized")
     try {
-      const totalSupply = await this.contract.totalSupply()
-      return ethers.formatEther(totalSupply)
+      const nextGigId = await this.contract.nextGigId()
+      return (Number(nextGigId) - 1).toString() // Subtract 1 since IDs start from 1
     } catch (error) {
-      console.error("Error getting total supply:", error)
+      console.error("Error getting total gigs:", error)
       return "0"
     }
   }
 
-  async getBalance(address: string): Promise<string> {
+  async getTotalOrders(): Promise<string> {
     if (!this.contract) throw new Error("Contract not initialized")
     try {
-      const balance = await this.contract.balanceOf(address)
+      const nextOrderId = await this.contract.nextOrderId()
+      return (Number(nextOrderId) - 1).toString() // Subtract 1 since IDs start from 1
+    } catch (error) {
+      console.error("Error getting total orders:", error)
+      return "0"
+    }
+  }
+
+  async getPlatformFee(): Promise<string> {
+    if (!this.contract) throw new Error("Contract not initialized")
+    try {
+      const feePercent = await this.contract.platformFeePercent()
+      return `${feePercent}%`
+    } catch (error) {
+      console.error("Error getting platform fee:", error)
+      return "5%"
+    }
+  }
+
+  // Marketplace-specific utility functions
+  async getContractBalance(): Promise<string> {
+    if (!this.provider) throw new Error("Provider not initialized")
+    try {
+      const balance = await this.provider.getBalance(CONTRACT_ADDRESS)
       return ethers.formatEther(balance)
     } catch (error) {
-      console.error("Error getting balance:", error)
+      console.error("Error getting contract balance:", error)
       return "0"
     }
   }
 
-  async transfer(to: string, amount: string): Promise<ethers.TransactionResponse> {
-    const contractWithSigner = await this.getContractWithSigner()
-    const amountWei = ethers.parseEther(amount)
-    return await contractWithSigner.transfer(to, amountWei)
-  }
-
-  async approve(spender: string, amount: string): Promise<ethers.TransactionResponse> {
-    const contractWithSigner = await this.getContractWithSigner()
-    const amountWei = ethers.parseEther(amount)
-    return await contractWithSigner.approve(spender, amountWei)
-  }
-
-  async getAllowance(owner: string, spender: string): Promise<string> {
+  async isContractPaused(): Promise<boolean> {
     if (!this.contract) throw new Error("Contract not initialized")
     try {
-      const allowance = await this.contract.allowance(owner, spender)
-      return ethers.formatEther(allowance)
+      return await this.contract.paused()
     } catch (error) {
-      console.error("Error getting allowance:", error)
-      return "0"
+      console.error("Error checking if contract is paused:", error)
+      return false
     }
   }
 
@@ -290,10 +291,17 @@ export class ContractService {
   }
 
   // Order-related methods
-  async orderGig(gigId: number, paymentAmount: string): Promise<ethers.TransactionResponse> {
+  async orderGig(gigId: number): Promise<ethers.TransactionResponse> {
     const contractWithSigner = await this.getContractWithSigner()
-    const amountInWei = ethers.parseEther(paymentAmount)
-    return await contractWithSigner.orderGig(gigId, { value: amountInWei })
+    
+    // Get the gig price from the blockchain
+    const gig = await this.contract?.getGig(gigId)
+    if (!gig) {
+      throw new Error("Gig not found")
+    }
+    
+    // Use the exact price stored in the contract
+    return await contractWithSigner.orderGig(gigId, { value: gig.price })
   }
 
   async getOrder(orderId: number): Promise<any> {
@@ -334,6 +342,54 @@ export class ContractService {
     this.contract.on("GigCreated", (gigId, provider, title, price) => {
       callback(Number(gigId), provider, title, ethers.formatEther(price))
     })
+  }
+
+  // Listen for order creation events
+  onOrderCreated(callback: (orderId: number, gigId: number, client: string, amount: string) => void) {
+    if (!this.contract) return
+    
+    this.contract.on("OrderCreated", (orderId, gigId, client, amount) => {
+      callback(Number(orderId), Number(gigId), client, ethers.formatEther(amount))
+    })
+  }
+
+  // Get orders for a specific gig by filtering events
+  async getGigOrders(gigId: number): Promise<any[]> {
+    if (!this.contract) return []
+    
+    try {
+      // Get OrderCreated events for this specific gig
+      const filter = this.contract.filters.OrderCreated(null, gigId)
+      const events = await this.contract.queryFilter(filter)
+      
+      const orders = await Promise.all(
+        events.map(async (event) => {
+          try {
+            const orderId = Number(event.args?.[0])
+            return await this.getOrder(orderId)
+          } catch (error) {
+            console.error(`Error getting order details:`, error)
+            return null
+          }
+        })
+      )
+      
+      return orders.filter(order => order !== null)
+    } catch (error) {
+      console.error("Error getting gig orders:", error)
+      return []
+    }
+  }
+
+  // Get active orders count for a gig
+  async getActiveOrdersCount(gigId: number): Promise<number> {
+    try {
+      const orders = await this.getGigOrders(gigId)
+      return orders.filter(order => !order.isPaid).length
+    } catch (error) {
+      console.error("Error getting active orders count:", error)
+      return 0
+    }
   }
 
   // Remove all event listeners
