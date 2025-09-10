@@ -16,12 +16,12 @@ export function ContractInfo() {
   const { toast } = useToast()
   const [contractName, setContractName] = useState<string>("")
   const [contractSymbol, setContractSymbol] = useState<string>("")
-  const [balance, setBalance] = useState<string>("0")
-  const [totalSupply, setTotalSupply] = useState<string>("0")
-  const [transferTo, setTransferTo] = useState<string>("")
-  const [transferAmount, setTransferAmount] = useState<string>("")
+  const [contractBalance, setContractBalance] = useState<string>("0")
+  const [totalGigs, setTotalGigs] = useState<string>("0")
+  const [totalOrders, setTotalOrders] = useState<string>("0")
+  const [platformFee, setPlatformFee] = useState<string>("5%")
+  const [isPaused, setIsPaused] = useState<boolean>(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [isTransferring, setIsTransferring] = useState(false)
 
   useEffect(() => {
     if (isConnected && isOnHederaNetwork) {
@@ -32,17 +32,23 @@ export function ContractInfo() {
   const loadContractInfo = async () => {
     setIsLoading(true)
     try {
-      const [name, symbol, supply, userBalance] = await Promise.all([
+      const [name, symbol, balance, gigs, orders, fee, paused] = await Promise.all([
         contractService.getContractName(),
         contractService.getContractSymbol(),
-        contractService.getTotalSupply(),
-        address ? contractService.getBalance(address) : Promise.resolve("0")
+        contractService.getContractBalance(),
+        contractService.getTotalGigs(),
+        contractService.getTotalOrders(),
+        contractService.getPlatformFee(),
+        contractService.isContractPaused()
       ])
       
       setContractName(name)
       setContractSymbol(symbol)
-      setTotalSupply(supply)
-      setBalance(userBalance)
+      setContractBalance(balance)
+      setTotalGigs(gigs)
+      setTotalOrders(orders)
+      setPlatformFee(fee)
+      setIsPaused(paused)
     } catch (error) {
       console.error("Error loading contract info:", error)
       toast({
@@ -55,61 +61,12 @@ export function ContractInfo() {
     }
   }
 
-  const handleTransfer = async () => {
-    if (!transferTo || !transferAmount) {
-      toast({
-        title: "Error",
-        description: "Please enter recipient address and amount",
-        variant: "destructive"
-      })
-      return
-    }
-
-    setIsTransferring(true)
-    try {
-      const tx = await contractService.transfer(transferTo, transferAmount)
-      
-      toast({
-        title: "Transaction Submitted",
-        description: `Transaction hash: ${tx.hash}`,
-        action: (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.open(contractService.getBlockExplorerUrl(tx.hash), "_blank")}
-          >
-            <ExternalLink className="h-3 w-3" />
-          </Button>
-        )
-      })
-
-      // Wait for transaction to be mined
-      await tx.wait()
-      
-      toast({
-        title: "Transfer Successful",
-        description: `Transferred ${transferAmount} ${contractSymbol} to ${transferTo.slice(0, 6)}...${transferTo.slice(-4)}`,
-      })
-
-      // Refresh balance
-      if (address) {
-        const newBalance = await contractService.getBalance(address)
-        setBalance(newBalance)
-      }
-      
-      // Clear form
-      setTransferTo("")
-      setTransferAmount("")
-    } catch (error: any) {
-      console.error("Transfer error:", error)
-      toast({
-        title: "Transfer Failed",
-        description: error.message || "Transaction failed",
-        variant: "destructive"
-      })
-    } finally {
-      setIsTransferring(false)
-    }
+  const refreshData = async () => {
+    await loadContractInfo()
+    toast({
+      title: "Data Refreshed",
+      description: "Contract information has been updated",
+    })
   }
 
   const copyToClipboard = (text: string) => {
@@ -153,19 +110,19 @@ export function ContractInfo() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            Contract Information
+            Marketplace Information
             {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
           </CardTitle>
           <CardDescription>
-            Contract deployed on Hedera Testnet
+            Gig Marketplace deployed on Hedera Testnet
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <Label>Contract Address</Label>
               <div className="flex items-center gap-2 mt-1">
-                <code className="text-sm bg-muted px-2 py-1 rounded flex-1">
+                <code className="text-sm bg-muted px-2 py-1 rounded flex-1 text-xs">
                   {contractService.getContractAddress()}
                 </code>
                 <Button
@@ -191,20 +148,40 @@ export function ContractInfo() {
               </div>
             </div>
             <div>
+              <Label>Contract Status</Label>
+              <div className="mt-1">
+                <Badge variant={isPaused ? "destructive" : "default"}>
+                  {isPaused ? "Paused" : "Active"}
+                </Badge>
+              </div>
+            </div>
+            <div>
               <Label>Contract Name</Label>
               <p className="text-sm font-mono mt-1">{contractName || "Loading..."}</p>
             </div>
             <div>
-              <Label>Symbol</Label>
-              <p className="text-sm font-mono mt-1">{contractSymbol || "Loading..."}</p>
+              <Label>Total Gigs</Label>
+              <p className="text-sm font-mono mt-1">{totalGigs}</p>
             </div>
             <div>
-              <Label>Total Supply</Label>
-              <p className="text-sm font-mono mt-1">{totalSupply} {contractSymbol}</p>
+              <Label>Total Orders</Label>
+              <p className="text-sm font-mono mt-1">{totalOrders}</p>
             </div>
             <div>
-              <Label>Your Balance</Label>
-              <p className="text-sm font-mono mt-1">{balance} {contractSymbol}</p>
+              <Label>Platform Fee</Label>
+              <p className="text-sm font-mono mt-1">{platformFee}</p>
+            </div>
+            <div>
+              <Label>Contract Balance</Label>
+              <p className="text-sm font-mono mt-1">{contractBalance} HBAR</p>
+            </div>
+            <div>
+              <Label>Actions</Label>
+              <div className="mt-1">
+                <Button variant="outline" size="sm" onClick={refreshData}>
+                  Refresh Data
+                </Button>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -212,37 +189,34 @@ export function ContractInfo() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Transfer Tokens</CardTitle>
-          <CardDescription>Send tokens to another address</CardDescription>
+          <CardTitle>Marketplace Statistics</CardTitle>
+          <CardDescription>Real-time marketplace metrics</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="transferTo">Recipient Address</Label>
-            <Input
-              id="transferTo"
-              placeholder="0x..."
-              value={transferTo}
-              onChange={(e) => setTransferTo(e.target.value)}
-            />
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="text-2xl font-bold text-blue-600">{totalGigs}</div>
+              <div className="text-sm text-blue-600">Total Gigs</div>
+            </div>
+            <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="text-2xl font-bold text-green-600">{totalOrders}</div>
+              <div className="text-sm text-green-600">Total Orders</div>
+            </div>
+            <div className="text-center p-4 bg-purple-50 border border-purple-200 rounded-lg">
+              <div className="text-2xl font-bold text-purple-600">{contractBalance}</div>
+              <div className="text-sm text-purple-600">HBAR in Escrow</div>
+            </div>
+            <div className="text-center p-4 bg-orange-50 border border-orange-200 rounded-lg">
+              <div className="text-2xl font-bold text-orange-600">{platformFee}</div>
+              <div className="text-sm text-orange-600">Platform Fee</div>
+            </div>
           </div>
-          <div>
-            <Label htmlFor="transferAmount">Amount</Label>
-            <Input
-              id="transferAmount"
-              type="number"
-              placeholder="0.0"
-              value={transferAmount}
-              onChange={(e) => setTransferAmount(e.target.value)}
-            />
+          <div className="mt-4 text-center">
+            <Button variant="outline" onClick={refreshData} disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Refresh Statistics
+            </Button>
           </div>
-          <Button 
-            onClick={handleTransfer} 
-            disabled={isTransferring || !transferTo || !transferAmount}
-            className="w-full"
-          >
-            {isTransferring && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Transfer {contractSymbol}
-          </Button>
         </CardContent>
       </Card>
     </div>
