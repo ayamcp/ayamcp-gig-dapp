@@ -13,18 +13,8 @@ import { QrCode, Copy, ArrowLeft, CheckCircle, Loader2, Clock, User } from "luci
 import { useToast } from "@/hooks/use-toast"
 import { contractService } from "@/lib/contract-service"
 import { CONTRACT_ADDRESS } from "@/lib/hedera-config"
+import { Order } from "@/types/gig"
 import { ethers } from "ethers"
-
-interface OrderData {
-  id: string
-  gigId: string
-  client: string
-  provider: string
-  amount: string
-  isCompleted: boolean
-  isPaid: boolean
-  createdAt: Date
-}
 
 interface GigData {
   id: string
@@ -43,7 +33,7 @@ export default function PaymentPage() {
   const { toast } = useToast()
   const orderId = params.orderId as string
 
-  const [order, setOrder] = useState<OrderData | null>(null)
+  const [order, setOrder] = useState<Order | null>(null)
   const [gig, setGig] = useState<GigData | null>(null)
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
@@ -85,7 +75,7 @@ export default function PaymentPage() {
     }
   }
 
-  const generateQRCode = async (orderData: OrderData, gigData: GigData) => {
+  const generateQRCode = async (orderData: Order, gigData: GigData) => {
     try {
       // Create direct payment URL for the specific order amount
       // This should be a direct HBAR transfer to the provider with order ID in memo
@@ -293,6 +283,20 @@ export default function PaymentPage() {
                   <span>Order ID:</span>
                   <span className="font-mono text-sm">#{orderId}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Status:</span>
+                  <Badge variant={order.isPaid ? "default" : "secondary"}>
+                    {order.isPaid ? "Paid" : "Pending Payment"}
+                  </Badge>
+                </div>
+                {order.isPaid && order.isCompleted && (
+                  <div className="flex justify-between">
+                    <span>Payment Release:</span>
+                    <Badge variant={order.paymentReleased ? "default" : "secondary"}>
+                      {order.paymentReleased ? "Released" : "In Escrow"}
+                    </Badge>
+                  </div>
+                )}
               </div>
 
               <Separator />

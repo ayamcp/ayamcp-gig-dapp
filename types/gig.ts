@@ -26,6 +26,18 @@ export interface CreateGigData {
   paymentToken: string
 }
 
+export interface Order {
+  id: string
+  gigId: string
+  client: string
+  provider: string
+  amount: string
+  isCompleted: boolean
+  isPaid: boolean
+  paymentReleased: boolean
+  createdAt: Date
+}
+
 export interface Network {
   id: string
   name: string
