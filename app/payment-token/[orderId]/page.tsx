@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { QrCode, Copy, ArrowLeft, CheckCircle, Loader2, Clock, User, RefreshCw } from "lucide-react"
+import { QrCode, Copy, ArrowLeft, CheckCircle, Loader2, Clock, User, RefreshCw, Coins } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { contractService } from "@/lib/contract-service"
 import { CONTRACT_ADDRESS } from "@/lib/hedera-config"
@@ -32,9 +32,10 @@ interface GigData {
   category: string
   deliveryTime: string
   active: boolean
+  token?: string
 }
 
-export default function PaymentPage() {
+export default function TokenPaymentPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
@@ -111,7 +112,7 @@ export default function PaymentPage() {
             if (updatedOrder.isPaid && !order.isPaid) {
               toast({
                 title: "Payment Received!",
-                description: "Your payment has been confirmed on the blockchain.",
+                description: "Your token payment has been confirmed on the blockchain.",
               })
             }
             
@@ -194,33 +195,32 @@ export default function PaymentPage() {
 
   const generateQRCode = async (orderData: Order, gigData: GigData) => {
     try {
-      // Create contract call data for payOrder function
-      // Get the correct function selector for payOrder(uint256)
+      // Create contract call data for payOrderWithToken function
       const contractInterface = new ethers.Interface([
-        "function payOrder(uint256 _orderId) payable"
+        "function payOrderWithToken(uint256 _orderId)"
       ])
-      const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
+      const callData = contractInterface.encodeFunctionData("payOrderWithToken", [parseInt(orderId)])
       
-      // Create transaction data object for calling contract
+      // Create transaction data object for calling contract (no value needed for token payments)
       const transactionData = {
-        to: CONTRACT_ADDRESS, // Send to contract, not provider
-        value: ethers.parseEther(orderData.amount).toString(), // Payment amount
-        data: callData, // Encoded payOrder function call
+        to: CONTRACT_ADDRESS,
+        value: "0", // No ETH value for token payments
+        data: callData,
         chainId: 296, // Hedera Testnet chain ID
-        gasLimit: "100000" // Higher gas limit for contract interaction
+        gasLimit: "200000" // Higher gas limit for token interaction
       }
       
-      console.log('[QR Code] Generated contract call data:', {
+      console.log('[QR Code] Generated token contract call data:', {
         contractAddress: CONTRACT_ADDRESS,
         orderId: orderId,
         amount: orderData.amount,
         callData: callData,
-        provider: orderData.provider
+        provider: orderData.provider,
+        tokenAddress: gigData.token || "Not set"
       })
       
       // Create a MetaMask-compatible transaction request for contract interaction
-      // Format: ethereum:0x<contractAddress>@<chainId>?value=<value>&data=<callData>
-      const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?value=${transactionData.value}&data=${transactionData.data}`
+      const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?data=${transactionData.data}`
       
       // Generate QR code for the contract transaction
       const qrUrl = await QRCode.toDataURL(ethereumUri, {
@@ -246,29 +246,30 @@ export default function PaymentPage() {
   const copyPaymentData = async () => {
     if (!order || !gig) return
 
-    // Create contract transaction data
+    // Create contract transaction data for token payment
     const contractInterface = new ethers.Interface([
-      "function payOrder(uint256 _orderId) payable"
+      "function payOrderWithToken(uint256 _orderId)"
     ])
-    const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
+    const callData = contractInterface.encodeFunctionData("payOrderWithToken", [parseInt(orderId)])
 
     const paymentData = {
-      type: "Contract Transaction",
+      type: "Token Contract Transaction",
       contractAddress: CONTRACT_ADDRESS,
-      function: "payOrder",
+      function: "payOrderWithToken",
       orderId: orderId,
       amount: order.amount,
-      currency: "HBAR",
+      tokenAddress: gig.token || "Not set",
       callData: callData,
-      description: `Payment for Order ${orderId}: ${gig.title}`,
-      network: "Hedera Testnet"
+      description: `Token payment for Order ${orderId}: ${gig.title}`,
+      network: "Hedera Testnet",
+      note: "Token approval required before payment"
     }
 
     try {
       await navigator.clipboard.writeText(JSON.stringify(paymentData, null, 2))
       toast({
         title: "Copied!",
-        description: "Contract transaction data copied to clipboard",
+        description: "Token contract transaction data copied to clipboard",
       })
     } catch (error) {
       toast({
@@ -282,19 +283,19 @@ export default function PaymentPage() {
   const copyMetaMaskUri = async () => {
     if (!order || !gig) return
     
-    // Create contract transaction URI
+    // Create contract transaction URI for token payment
     const contractInterface = new ethers.Interface([
-      "function payOrder(uint256 _orderId) payable"
+      "function payOrderWithToken(uint256 _orderId)"
     ])
-    const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
+    const callData = contractInterface.encodeFunctionData("payOrderWithToken", [parseInt(orderId)])
     
-    const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?value=${ethers.parseEther(order.amount).toString()}&data=${callData}`
+    const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?data=${callData}`
 
     try {
       await navigator.clipboard.writeText(ethereumUri)
       toast({
         title: "Copied!",
-        description: "Contract transaction URI copied to clipboard",
+        description: "Token contract transaction URI copied to clipboard",
       })
     } catch (error) {
       toast({
@@ -331,13 +332,13 @@ export default function PaymentPage() {
     }
   }
 
-  // MetaMask browser extension payment function
-  const payWithMetaMask = async () => {
-    if (!orderId || !order) return
+  // MetaMask browser extension token payment function
+  const payWithToken = async () => {
+    if (!orderId || !order || !gig) return
 
     try {
       setIsProcessing(true)
-      console.log(`[METAMASK PAY] Starting MetaMask payment for Order ${orderId}`)
+      console.log(`[TOKEN PAY] Starting token payment for Order ${orderId}`)
       
       // Check if MetaMask is available
       if (typeof window.ethereum === 'undefined') {
@@ -350,16 +351,16 @@ export default function PaymentPage() {
       }
 
       toast({
-        title: "Processing Payment",
-        description: "Please confirm the transaction in MetaMask...",
+        title: "Processing Token Payment",
+        description: "Please approve the token spending and confirm the transaction in MetaMask...",
       })
 
-      console.log(`[METAMASK PAY] Calling contractService.payOrder(${orderId})`)
+      console.log(`[TOKEN PAY] Calling contractService.payOrderWithToken(${orderId})`)
       
-      // Use the contract service's payOrder method - much cleaner!
-      const tx = await contractService.payOrder(parseInt(orderId))
+      // Use the contract service's payOrderWithToken method
+      const tx = await contractService.payOrderWithToken(parseInt(orderId))
       
-      console.log(`[METAMASK PAY] Transaction submitted via contractService:`, tx.hash)
+      console.log(`[TOKEN PAY] Transaction submitted via contractService:`, tx.hash)
       
       toast({
         title: "Transaction Submitted",
@@ -370,23 +371,23 @@ export default function PaymentPage() {
       const receipt = await tx.wait()
       
       if (receipt?.status === 1) {
-        console.log(`[METAMASK PAY] Payment confirmed! Reloading order data`)
+        console.log(`[TOKEN PAY] Payment confirmed! Reloading order data`)
         
         // Reload order data to reflect payment
         await loadOrderData(true)
         
         toast({
-          title: "Payment Successful! 🎉",
-          description: "Your payment has been confirmed and funds are held in escrow.",
+          title: "Token Payment Successful! 🎉",
+          description: "Your token payment has been confirmed and funds are held in escrow.",
         })
       } else {
         throw new Error("Transaction failed")
       }
 
     } catch (error: any) {
-      console.error("[METAMASK PAY] Payment error:", error)
+      console.error("[TOKEN PAY] Payment error:", error)
       
-      let errorMessage = "Payment failed"
+      let errorMessage = "Token payment failed"
       if (error.code === "ACTION_REJECTED" || error.code === 4001) {
         errorMessage = "Transaction was rejected by user"
       } else if (error.message) {
@@ -394,7 +395,7 @@ export default function PaymentPage() {
       }
 
       toast({
-        title: "Payment Failed",
+        title: "Token Payment Failed",
         description: errorMessage,
         variant: "destructive",
       })
@@ -446,7 +447,7 @@ export default function PaymentPage() {
                 <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
                 <h1 className="text-2xl font-bold mb-2">Already Paid!</h1>
                 <p className="text-muted-foreground mb-4">
-                  This order has already been paid for.
+                  This order has already been paid for with tokens.
                 </p>
                 <div className="space-y-2 mb-6">
                   <p className="text-sm">Order ID:</p>
@@ -470,6 +471,8 @@ export default function PaymentPage() {
       </div>
     )
   }
+
+  const tokenAddress = gig.token === "native" ? "Native Token (HBAR)" : gig.token || "Not specified"
 
   return (
     <div className="min-h-screen bg-background">
@@ -510,16 +513,19 @@ export default function PaymentPage() {
             </div>
           </div>
           
-          <h1 className="text-3xl font-bold mb-2">Payment for Order #{orderId}</h1>
+          <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
+            <Coins className="h-8 w-8 text-blue-500" />
+            Token Payment for Order #{orderId}
+          </h1>
           <p className="text-muted-foreground">
-            Complete your payment by scanning the QR code or using the payment details below
+            Complete your token payment using the payment methods below
           </p>
           
           {/* Status indicator */}
           <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
             <p className="text-sm">
-              <strong>Auto-refresh:</strong> Status automatically updates every 15 seconds. 
-              Use the "Refresh Status" button above for immediate updates.
+              <strong>Token Payment:</strong> This order requires ERC20 token payment. 
+              Make sure you have approved the contract to spend your tokens.
             </p>
           </div>
         </div>
@@ -579,6 +585,12 @@ export default function PaymentPage() {
                   <span className="text-sm">{gig.deliveryTime}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span>Payment Token:</span>
+                  <span className="text-sm font-mono">
+                    {tokenAddress === "Native Token (HBAR)" ? tokenAddress : `${tokenAddress?.slice(0, 6)}...${tokenAddress?.slice(-4)}`}
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span>Payment Status:</span>
                   <Badge variant={order.isPaid ? "default" : "secondary"}>
                     {order.isPaid ? "Paid" : "Pending Payment"}
@@ -598,7 +610,7 @@ export default function PaymentPage() {
               
               <div className="flex justify-between text-lg font-semibold">
                 <span>Order Amount:</span>
-                <span>{order.amount} HBAR</span>
+                <span>{order.amount} Tokens</span>
               </div>
               
               {/* Show price comparison if different */}
@@ -606,34 +618,52 @@ export default function PaymentPage() {
                 <div className="text-sm text-muted-foreground">
                   <div className="flex justify-between">
                     <span>Original Gig Price:</span>
-                    <span>{gig.price} HBAR</span>
+                    <span>{gig.price} Tokens</span>
                   </div>
                 </div>
               )}
 
-              {/* Primary Payment Button - MetaMask Browser Extension */}
+              {/* Primary Payment Button - MetaMask Token Payment */}
               {!order.isPaid && (
                 <>
                   <Separator />
-                  <Button 
-                    onClick={payWithMetaMask}
-                    disabled={isProcessing}
-                    className="w-full"
-                    size="lg"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Processing Payment...
-                      </>
-                    ) : (
-                      <>
-                        Pay {order.amount} HBAR Now
-                      </>
-                    )}
-                  </Button>
+                  {tokenAddress !== "Native Token (HBAR)" ? (
+                    <Button 
+                      onClick={payWithToken}
+                      disabled={isProcessing}
+                      className="w-full"
+                      size="lg"
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Processing Token Payment...
+                        </>
+                      ) : (
+                        <>
+                          <Coins className="h-4 w-4 mr-2" />
+                          Pay {order.amount} Tokens Now
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <div className="p-3 bg-yellow-50 dark:bg-yellow-950 rounded-lg">
+                      <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                        <strong>Notice:</strong> This gig is configured for native token payment (HBAR). 
+                        Use the regular payment page instead.
+                      </p>
+                      <Button 
+                        onClick={() => router.push(`/payment/${orderId}`)}
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                      >
+                        Go to Regular Payment Page
+                      </Button>
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground text-center">
-                    Uses MetaMask browser extension
+                    Uses MetaMask browser extension for token transactions
                   </p>
                 </>
               )}
@@ -645,16 +675,17 @@ export default function PaymentPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <QrCode className="h-5 w-5" />
-                Alternative Payment Methods
+                Token Payment Methods
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               {!order.isPaid && (
                 <div className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
-                  <p><strong>Recommended:</strong> Use the "Pay Now" button above for direct browser payment.</p>
-                  <p className="mt-1">The methods below are for mobile wallets and manual transactions.</p>
+                  <p><strong>Important:</strong> You need to approve the contract to spend your tokens before payment.</p>
+                  <p className="mt-1">Use the "Pay Now" button above for automated approval and payment.</p>
                 </div>
               )}
+              
               {/* QR Code Section */}
               <div className="text-center">
                 <h3 className="font-semibold mb-4">Scan with MetaMask</h3>
@@ -662,13 +693,13 @@ export default function PaymentPage() {
                   <div className="inline-block p-4 bg-white rounded-lg">
                     <img 
                       src={qrCodeUrl} 
-                      alt="Payment QR Code" 
+                      alt="Token Payment QR Code" 
                       className="w-48 h-48 mx-auto"
                     />
                   </div>
                 )}
                 <p className="text-sm text-muted-foreground mt-2">
-                  Scan to call the contract's payOrder function with proper escrow
+                  Scan to call the contract's payOrderWithToken function
                 </p>
               </div>
 
@@ -676,7 +707,7 @@ export default function PaymentPage() {
 
               {/* Manual Payment Data */}
               <div>
-                <h3 className="font-semibold mb-2">Contract Transaction Details</h3>
+                <h3 className="font-semibold mb-2">Token Contract Transaction Details</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span>Contract Address:</span>
@@ -686,15 +717,17 @@ export default function PaymentPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>Function:</span>
-                    <span className="font-mono text-xs">payOrder({orderId})</span>
+                    <span className="font-mono text-xs">payOrderWithToken({orderId})</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Amount (HBAR):</span>
-                    <span className="font-semibold">{order.amount} HBAR</span>
+                    <span>Token Address:</span>
+                    <span className="font-mono text-xs">
+                      {tokenAddress === "Native Token (HBAR)" ? tokenAddress : `${tokenAddress?.slice(0, 6)}...${tokenAddress?.slice(-4)}`}
+                    </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Amount (Wei):</span>
-                    <span className="font-mono text-xs">{ethers.parseEther(order.amount).toString()}</span>
+                    <span>Amount (Tokens):</span>
+                    <span className="font-semibold">{order.amount} Tokens</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Network:</span>
@@ -702,7 +735,7 @@ export default function PaymentPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>Escrow:</span>
-                    <span className="text-xs">Funds held until completion</span>
+                    <span className="text-xs">Tokens held until completion</span>
                   </div>
                 </div>
                 <div className="flex gap-2 mt-3">
@@ -730,7 +763,7 @@ export default function PaymentPage() {
               {/* Payment Status */}
               <div className="text-center p-4 bg-muted rounded-lg">
                 <p className="text-sm text-muted-foreground">
-                  After payment, the funds will be held in escrow until the order is completed and released by the client.
+                  After token payment, the tokens will be held in escrow until the order is completed and released by the client.
                 </p>
               </div>
             </CardContent>

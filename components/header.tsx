@@ -24,6 +24,9 @@ export function Header() {
             <Link href="/browse" className="text-sm font-medium hover:text-primary transition-colors">
               Browse Gigs
             </Link>
+            <Link href="/orders" className="text-sm font-medium hover:text-primary transition-colors">
+              Orders
+            </Link>
             <Link href="/requests" className="text-sm font-medium hover:text-primary transition-colors">
               View Requests
             </Link>
@@ -48,6 +51,9 @@ export function Header() {
           <nav className="container py-4 flex flex-col gap-4">
             <Link href="/browse" className="text-sm font-medium hover:text-primary transition-colors">
               Browse Gigs
+            </Link>
+            <Link href="/orders" className="text-sm font-medium hover:text-primary transition-colors">
+              Orders
             </Link>
             <Link href="/requests" className="text-sm font-medium hover:text-primary transition-colors">
               View Requests

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ import { CreateGigData, GIG_CATEGORIES, DELIVERY_OPTIONS, SUPPORTED_NETWORKS, To
 import { ProtectedRoute } from "@/components/protected-route"
 
 export default function PostGigPage() {
+  const router = useRouter()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
   const [tags, setTags] = useState<string[]>([])
@@ -125,6 +127,9 @@ export default function PostGigPage() {
           paymentToken: "native"
         })
         setTags([])
+
+        // Redirect to browse page
+        router.push("/browse")
       } else {
         throw new Error("Transaction failed")
       }
