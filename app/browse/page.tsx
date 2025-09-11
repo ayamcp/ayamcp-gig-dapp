@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { Button } from "@/components/ui/button"
@@ -8,19 +9,22 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Search, Filter, Star, Clock, Loader2, Grid, List, QrCode } from "lucide-react"
-import Link from "next/link"
+import { Search, Filter, Star, Clock, Loader2, Grid, List, ShoppingCart } from "lucide-react"
 import { contractService } from "@/lib/contract-service"
 import { Gig, GIG_CATEGORIES } from "@/types/gig"
 import { GigDetailsModal } from "@/components/gig-details-modal"
+import { useToast } from "@/hooks/use-toast"
 
 export default function BrowsePage() {
+  const router = useRouter()
+  const { toast } = useToast()
   const [gigs, setGigs] = useState<Gig[]>([])
   const [filteredGigs, setFilteredGigs] = useState<Gig[]>([])
   const [gigOrderCounts, setGigOrderCounts] = useState<{[key: string]: number}>({})
   const [selectedGig, setSelectedGig] = useState<Gig | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [orderingGigId, setOrderingGigId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string>("all")
   const [priceFilter, setPriceFilter] = useState<string>("all")
@@ -133,6 +137,75 @@ export default function BrowsePage() {
     setSelectedGig(null)
   }
 
+  const handleOrderNow = async (gig: Gig) => {
+    try {
+      setOrderingGigId(gig.id)
+      
+      toast({
+        title: "Creating Order",
+        description: "Please confirm the transaction in your wallet...",
+      })
+
+      // Create order on blockchain
+      const tx = await contractService.orderGig(parseInt(gig.id))
+      
+      toast({
+        title: "Transaction Submitted",
+        description: "Creating your order...",
+      })
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait()
+      
+      if (receipt?.status === 1) {
+        // Try to extract order ID from transaction logs
+        let orderId = null
+        if (receipt.logs && receipt.logs.length > 0) {
+          // For now, we'll calculate the likely next order ID
+          // In production, you'd want to parse the logs properly
+          const nextOrderId = await contractService.getTotalOrders()
+          orderId = (parseInt(nextOrderId) + 1).toString()
+        }
+        
+        toast({
+          title: "Order Created!",
+          description: "Redirecting to payment page...",
+        })
+
+        // Redirect to payment page with order ID
+        if (orderId) {
+          router.push(`/payment/${orderId}`)
+        } else {
+          // Fallback: redirect to browse page if we can't get order ID
+          toast({
+            title: "Order Created",
+            description: "Your order was created successfully. Please check your orders page.",
+          })
+          router.push('/profile')
+        }
+      } else {
+        throw new Error("Transaction failed")
+      }
+    } catch (error: any) {
+      console.error("Order creation error:", error)
+      
+      let errorMessage = "Failed to create order"
+      if (error.code === "ACTION_REJECTED") {
+        errorMessage = "Transaction was rejected by user"
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      toast({
+        title: "Order Creation Failed",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    } finally {
+      setOrderingGigId(null)
+    }
+  }
+
   const GridView = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {filteredGigs.map((gig) => (
@@ -192,11 +265,22 @@ export default function BrowsePage() {
             >
               View Details
             </Button>
-            <Button asChild className="flex-1">
-              <Link href={`/payment/${gig.id}`}>
-                <QrCode className="h-4 w-4 mr-2" />
-                Pay Now
-              </Link>
+            <Button 
+              className="flex-1"
+              onClick={() => handleOrderNow(gig)}
+              disabled={orderingGigId === gig.id}
+            >
+              {orderingGigId === gig.id ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating Order...
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="h-4 w-4 mr-2" />
+                  Order Now
+                </>
+              )}
             </Button>
           </CardFooter>
         </Card>
@@ -247,11 +331,21 @@ export default function BrowsePage() {
                   >
                     View Details
                   </Button>
-                  <Button asChild>
-                    <Link href={`/payment/${gig.id}`}>
-                      <QrCode className="h-4 w-4 mr-2" />
-                      Pay Now
-                    </Link>
+                  <Button 
+                    onClick={() => handleOrderNow(gig)}
+                    disabled={orderingGigId === gig.id}
+                  >
+                    {orderingGigId === gig.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating Order...
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingCart className="h-4 w-4 mr-2" />
+                        Order Now
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
