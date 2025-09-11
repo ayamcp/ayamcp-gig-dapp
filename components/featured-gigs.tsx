@@ -1,21 +1,25 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Star, Clock, Loader2, QrCode } from "lucide-react"
-import Link from "next/link"
+import { Star, Clock, Loader2, ShoppingCart } from "lucide-react"
 import { contractService } from "@/lib/contract-service"
 import { Gig } from "@/types/gig"
 import { GigDetailsModal } from "@/components/gig-details-modal"
+import { useToast } from "@/hooks/use-toast"
 
 export function FeaturedGigs() {
+  const router = useRouter()
+  const { toast } = useToast()
   const [gigs, setGigs] = useState<Gig[]>([])
   const [gigOrderCounts, setGigOrderCounts] = useState<{[key: string]: number}>({})
   const [selectedGig, setSelectedGig] = useState<Gig | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [orderingGigId, setOrderingGigId] = useState<string | null>(null)
 
   useEffect(() => {
     loadFeaturedGigs()
@@ -71,6 +75,75 @@ export function FeaturedGigs() {
   const handleCloseModal = () => {
     setIsModalOpen(false)
     setSelectedGig(null)
+  }
+
+  const handleOrderNow = async (gig: Gig) => {
+    try {
+      setOrderingGigId(gig.id)
+      
+      toast({
+        title: "Creating Order",
+        description: "Please confirm the transaction in your wallet...",
+      })
+
+      // Create order on blockchain
+      const tx = await contractService.orderGig(parseInt(gig.id))
+      
+      toast({
+        title: "Transaction Submitted",
+        description: "Creating your order...",
+      })
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait()
+      
+      if (receipt?.status === 1) {
+        // Try to extract order ID from transaction logs
+        let orderId = null
+        if (receipt.logs && receipt.logs.length > 0) {
+          // For now, we'll calculate the likely next order ID
+          // In production, you'd want to parse the logs properly
+          const nextOrderId = await contractService.getTotalOrders()
+          orderId = (parseInt(nextOrderId) + 1).toString()
+        }
+        
+        toast({
+          title: "Order Created!",
+          description: "Redirecting to payment page...",
+        })
+
+        // Redirect to payment page with order ID
+        if (orderId) {
+          router.push(`/payment/${orderId}`)
+        } else {
+          // Fallback: redirect to browse page if we can't get order ID
+          toast({
+            title: "Order Created",
+            description: "Your order was created successfully. Please check your orders page.",
+          })
+          router.push('/profile')
+        }
+      } else {
+        throw new Error("Transaction failed")
+      }
+    } catch (error: any) {
+      console.error("Order creation error:", error)
+      
+      let errorMessage = "Failed to create order"
+      if (error.code === "ACTION_REJECTED") {
+        errorMessage = "Transaction was rejected by user"
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      toast({
+        title: "Order Creation Failed",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    } finally {
+      setOrderingGigId(null)
+    }
   }
 
   return (
@@ -153,11 +226,22 @@ export function FeaturedGigs() {
                   >
                     View Details
                   </Button>
-                  <Button asChild className="flex-1">
-                    <Link href={`/payment/${gig.id}`}>
-                      <QrCode className="h-4 w-4 mr-2" />
-                      Pay Now
-                    </Link>
+                  <Button 
+                    className="flex-1"
+                    onClick={() => handleOrderNow(gig)}
+                    disabled={orderingGigId === gig.id}
+                  >
+                    {orderingGigId === gig.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating Order...
+                      </>
+                    ) : (
+                      <>
+                        <ShoppingCart className="h-4 w-4 mr-2" />
+                        Order Now
+                      </>
+                    )}
                   </Button>
                 </CardFooter>
               </Card>
