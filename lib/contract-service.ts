@@ -1,7 +1,7 @@
 import { ethers } from "ethers"
 import { getHederaProvider, getHederaSigner, CONTRACT_ADDRESS } from "./hedera-config"
 
-// Gig Marketplace Contract ABI - Based on actual deployed contract
+// Gig Marketplace Contract ABI - Updated to match new contract structure
 const CONTRACT_ABI = [
   // Core gig functions
   "function createGig(string memory _title, string memory _description, uint256 _price, address _token)",
@@ -9,15 +9,17 @@ const CONTRACT_ABI = [
   "function updateGig(uint256 _gigId, string memory _title, string memory _description, uint256 _price, address _token)",
   "function deactivateGig(uint256 _gigId)",
   
-  // Order functions
-  "function orderGig(uint256 _gigId) payable",
+  // Order functions - UPDATED
+  "function orderGig(uint256 _gigId)",  // No longer payable
+  "function payOrder(uint256 _orderId) payable",  // New payment function
   "function completeOrder(uint256 _orderId)",
   "function releasePayment(uint256 _orderId)",
-  "function getOrder(uint256 _orderId) view returns (tuple(uint256 id, uint256 gigId, address client, address provider, uint256 amount, bool isCompleted, bool isPaid, uint256 createdAt))",
+  "function getOrder(uint256 _orderId) view returns (tuple(uint256 id, uint256 gigId, address client, address provider, uint256 amount, bool isCompleted, bool isPaid, bool paymentReleased, uint256 createdAt))",  // Added paymentReleased field
   
   // Query functions
   "function getProviderGigs(address _provider) view returns (uint256[])",
   "function getClientOrders(address _client) view returns (uint256[])",
+  "function getAllActiveGigs() view returns (tuple(uint256 id, address provider, string title, string description, uint256 price, bool isActive, bool isCompleted, address token)[])",
   
   // Admin functions
   "function setPlatformFee(uint256 _feePercent)",
@@ -31,11 +33,12 @@ const CONTRACT_ABI = [
   "function nextOrderId() view returns (uint256)",
   "function platformFeePercent() view returns (uint256)",
   
-  // Events
+  // Events - UPDATED
   "event GigCreated(uint256 indexed gigId, address indexed provider, string title, uint256 price)",
   "event GigUpdated(uint256 indexed gigId, string title, string description, uint256 price)",
   "event GigDeactivated(uint256 indexed gigId)",
   "event OrderCreated(uint256 indexed orderId, uint256 indexed gigId, address indexed client, uint256 amount)",
+  "event OrderPaid(uint256 indexed orderId, address indexed client, uint256 amount)",  // New event
   "event OrderCompleted(uint256 indexed orderId)",
   "event PaymentReleased(uint256 indexed orderId, address indexed provider, uint256 amount)"
 ]
@@ -294,14 +297,21 @@ export class ContractService {
   async orderGig(gigId: number): Promise<ethers.TransactionResponse> {
     const contractWithSigner = await this.getContractWithSigner()
     
-    // Get the gig price from the blockchain
-    const gig = await this.contract?.getGig(gigId)
-    if (!gig) {
-      throw new Error("Gig not found")
+    // No payment required for creating order (just creates the order/invoice)
+    return await contractWithSigner.orderGig(gigId)
+  }
+
+  async payOrder(orderId: number): Promise<ethers.TransactionResponse> {
+    const contractWithSigner = await this.getContractWithSigner()
+    
+    // Get the order details to know the payment amount
+    const order = await this.contract?.getOrder(orderId)
+    if (!order) {
+      throw new Error("Order not found")
     }
     
-    // Use the exact price stored in the contract
-    return await contractWithSigner.orderGig(gigId, { value: gig.price })
+    // Pay the exact amount stored in the order
+    return await contractWithSigner.payOrder(orderId, { value: order.amount })
   }
 
   async getOrder(orderId: number): Promise<any> {
@@ -316,6 +326,7 @@ export class ContractService {
         amount: ethers.formatEther(order.amount),
         isCompleted: order.isCompleted,
         isPaid: order.isPaid,
+        paymentReleased: order.paymentReleased,  // New field added
         createdAt: new Date(Number(order.createdAt) * 1000)
       }
     } catch (error) {
