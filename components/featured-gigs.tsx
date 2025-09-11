@@ -98,25 +98,20 @@ export function FeaturedGigs() {
       const receipt = await tx.wait()
       
       if (receipt?.status === 1) {
-        // Try to extract order ID from transaction logs
-        let orderId = null
-        if (receipt.logs && receipt.logs.length > 0) {
-          // For now, we'll calculate the likely next order ID
-          // In production, you'd want to parse the logs properly
-          const nextOrderId = await contractService.getTotalOrders()
-          orderId = (parseInt(nextOrderId) + 1).toString()
-        }
+        // Extract the actual order ID from the OrderCreated event
+        const orderId = contractService.parseOrderCreatedEvent(receipt)
         
-        toast({
-          title: "Order Created!",
-          description: "Redirecting to payment page...",
-        })
-
-        // Redirect to payment page with order ID
         if (orderId) {
+          toast({
+            title: "Order Created!",
+            description: `Order #${orderId} created. Redirecting to payment page...`,
+          })
+
+          // Redirect to payment page with the actual order ID
           router.push(`/payment/${orderId}`)
         } else {
-          // Fallback: redirect to browse page if we can't get order ID
+          // Fallback if we can't parse the order ID
+          console.warn("Could not extract orderId from transaction logs")
           toast({
             title: "Order Created",
             description: "Your order was created successfully. Please check your orders page.",

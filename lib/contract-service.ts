@@ -403,6 +403,34 @@ export class ContractService {
     }
   }
 
+  // Extract orderId from OrderCreated event in transaction receipt
+  parseOrderCreatedEvent(receipt: ethers.TransactionReceipt): number | null {
+    if (!this.contract || !receipt.logs) return null
+    
+    try {
+      for (const log of receipt.logs) {
+        try {
+          const parsedLog = this.contract.interface.parseLog({
+            topics: log.topics,
+            data: log.data
+          })
+          
+          if (parsedLog && parsedLog.name === 'OrderCreated') {
+            // OrderCreated(uint256 indexed orderId, uint256 indexed gigId, address indexed client, uint256 amount)
+            return Number(parsedLog.args[0]) // orderId is the first argument
+          }
+        } catch (error) {
+          // Skip logs that can't be parsed by this contract
+          continue
+        }
+      }
+    } catch (error) {
+      console.error("Error parsing OrderCreated event:", error)
+    }
+    
+    return null
+  }
+
   // Remove all event listeners
   removeAllListeners() {
     if (this.contract) {
