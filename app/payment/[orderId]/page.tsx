@@ -38,6 +38,7 @@ export default function PaymentPage() {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false)
   const [paymentHash, setPaymentHash] = useState<string>("")
 
   useEffect(() => {
@@ -46,12 +47,56 @@ export default function PaymentPage() {
     }
   }, [orderId])
 
+  // Poll for payment status updates every 10 seconds
+  useEffect(() => {
+    if (!orderId || !order) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        // Only poll if payment is still pending
+        if (!order.isPaid) {
+          const updatedOrder = await contractService.getOrder(parseInt(orderId))
+          console.log(`[polling] Order ${orderId} status check:`, {
+            isPaid: updatedOrder.isPaid,
+            paymentReleased: updatedOrder.paymentReleased,
+            previousIsPaid: order.isPaid,
+            timestamp: new Date().toISOString()
+          })
+          
+          if (updatedOrder.isPaid !== order.isPaid || updatedOrder.paymentReleased !== order.paymentReleased) {
+            console.log(`[polling] Status changed! Setting new order state`)
+            setOrder(updatedOrder)
+            
+            if (updatedOrder.isPaid && !order.isPaid) {
+              toast({
+                title: "Payment Received!",
+                description: "Your payment has been confirmed on the blockchain.",
+              })
+            }
+          }
+        } else {
+          console.log(`[polling] Order ${orderId} already paid, skipping poll`)
+        }
+      } catch (error) {
+        console.error("Error polling order status:", error)
+      }
+    }, 10000) // Poll every 10 seconds
+
+    return () => clearInterval(pollInterval)
+  }, [orderId, order?.isPaid, order?.paymentReleased])
+
   const loadOrderData = async () => {
     try {
       setIsLoading(true)
       
       // First get the order data
       const orderData = await contractService.getOrder(parseInt(orderId))
+      console.log(`[loadOrderData] Order ${orderId} payment status:`, {
+        isPaid: orderData.isPaid,
+        paymentReleased: orderData.paymentReleased,
+        amount: orderData.amount,
+        timestamp: new Date().toISOString()
+      })
       setOrder(orderData)
       
       // Then get the associated gig data
@@ -162,6 +207,113 @@ export default function PaymentPage() {
         description: "Failed to copy transaction URI",
         variant: "destructive",
       })
+    }
+  }
+
+  const payWithContract = async () => {
+    if (!orderId || !order) return
+
+    try {
+      setIsProcessing(true)
+      
+      toast({
+        title: "Processing Payment",
+        description: "Please confirm the transaction in your wallet...",
+      })
+
+      // Use the contract's payOrder function to ensure proper escrow and status updates
+      const tx = await contractService.payOrder(parseInt(orderId))
+      
+      toast({
+        title: "Transaction Submitted",
+        description: "Processing your payment...",
+      })
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait()
+      
+      if (receipt?.status === 1) {
+        console.log(`[payWithContract] Payment successful for Order ${orderId}, reloading order data`)
+        // Reload order data to reflect payment
+        await loadOrderData()
+        
+        toast({
+          title: "Payment Successful!",
+          description: "Your payment has been confirmed and funds are held in escrow.",
+        })
+      } else {
+        throw new Error("Transaction failed")
+      }
+    } catch (error: any) {
+      console.error("Payment error:", error)
+      
+      let errorMessage = "Payment failed"
+      if (error.code === "ACTION_REJECTED") {
+        errorMessage = "Transaction was rejected by user"
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      toast({
+        title: "Payment Failed",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const checkPaymentStatus = async () => {
+    if (!orderId) return
+
+    try {
+      setIsCheckingStatus(true)
+      
+      // Re-fetch the order data to check for payment updates
+      const updatedOrder = await contractService.getOrder(parseInt(orderId))
+      console.log(`[checkPaymentStatus] Manual check for Order ${orderId}:`, {
+        isPaid: updatedOrder.isPaid,
+        paymentReleased: updatedOrder.paymentReleased,
+        previousIsPaid: order?.isPaid,
+        timestamp: new Date().toISOString()
+      })
+      
+      if (updatedOrder.isPaid !== order?.isPaid) {
+        console.log(`[checkPaymentStatus] Status changed! Updating order state`)
+        setOrder(updatedOrder)
+        
+        if (updatedOrder.isPaid) {
+          toast({
+            title: "Payment Confirmed!",
+            description: "Your payment has been confirmed on the blockchain.",
+          })
+        } else {
+          toast({
+            title: "Payment Status",
+            description: "Payment is still pending. Please ensure your transaction was successful.",
+            variant: "default",
+          })
+        }
+      } else if (!updatedOrder.isPaid) {
+        console.log(`[checkPaymentStatus] Payment still pending`)
+        toast({
+          title: "Payment Pending",
+          description: "No payment detected yet. It may take a few minutes for blockchain confirmation.",
+          variant: "default",
+        })
+      } else {
+        console.log(`[checkPaymentStatus] Payment confirmed, no change needed`)
+      }
+    } catch (error) {
+      console.error("Error checking payment status:", error)
+      toast({
+        title: "Error",
+        description: "Failed to check payment status. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsCheckingStatus(false)
     }
   }
 
@@ -338,6 +490,27 @@ export default function PaymentPage() {
                   </div>
                 </div>
               )}
+
+              {/* Primary Payment Button */}
+              {!order.isPaid && (
+                <Button 
+                  onClick={payWithContract}
+                  disabled={isProcessing}
+                  className="w-full"
+                  size="lg"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Processing Payment...
+                    </>
+                  ) : (
+                    <>
+                      Pay {order.amount} HBAR Now
+                    </>
+                  )}
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -346,10 +519,15 @@ export default function PaymentPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <QrCode className="h-5 w-5" />
-                Payment Options
+                Alternative Payment Methods
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+                <p><strong>Recommended:</strong> Use the "Pay Now" button above for automatic escrow and status updates.</p>
+                <p className="mt-1">The methods below require manual confirmation and may not update payment status automatically.</p>
+              </div>
+
               {/* QR Code Section */}
               <div className="text-center">
                 <h3 className="font-semibold mb-4">Scan with MetaMask</h3>
@@ -419,10 +597,37 @@ export default function PaymentPage() {
               <Separator />
 
               {/* Payment Status */}
-              <div className="text-center p-4 bg-muted rounded-lg">
+              <div className="text-center p-4 bg-muted rounded-lg space-y-3">
                 <p className="text-sm text-muted-foreground">
                   After payment, the funds will be held in escrow until the order is completed and released by the client.
                 </p>
+                
+                {!order.isPaid && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Sent payment but status not updated? Click below to check:
+                    </p>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={checkPaymentStatus}
+                      disabled={isCheckingStatus}
+                      className="w-full max-w-xs"
+                    >
+                      {isCheckingStatus ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Checking Status...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="h-4 w-4 mr-2" />
+                          Check Payment Status
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
