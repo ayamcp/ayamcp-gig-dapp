@@ -12,6 +12,7 @@ const CONTRACT_ABI = [
   // Order functions - UPDATED
   "function orderGig(uint256 _gigId)",  // No longer payable
   "function payOrder(uint256 _orderId) payable",  // New payment function
+  "function payOrderWithToken(uint256 _orderId)",  // Token payment function
   "function completeOrder(uint256 _orderId)",
   "function releasePayment(uint256 _orderId)",
   "function getOrder(uint256 _orderId) view returns (tuple(uint256 id, uint256 gigId, address client, address provider, uint256 amount, bool isCompleted, bool isPaid, bool paymentReleased, uint256 createdAt))",  // Added paymentReleased field
@@ -406,6 +407,14 @@ export class ContractService {
       console.error('[CONTRACT SERVICE] Manual transaction failed:', manualError)
       throw manualError
     }
+  }
+
+  async payOrderWithToken(orderId: number): Promise<ethers.TransactionResponse> {
+    const contractWithSigner = await this.getContractWithSigner()
+    
+    console.log(`[CONTRACT SERVICE] PayOrderWithToken for order ${orderId}`)
+    
+    return await contractWithSigner.payOrderWithToken(orderId)
   }
 
   async getOrder(orderId: number): Promise<any> {
