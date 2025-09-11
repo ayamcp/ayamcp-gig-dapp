@@ -77,16 +77,22 @@ export default function PaymentPage() {
 
   const generateQRCode = async (orderData: Order, gigData: GigData) => {
     try {
-      // Create direct payment URL for the specific order amount
-      // This should be a direct HBAR transfer to the provider with order ID in memo
-      const memo = `Order ${orderId}: ${gigData.title}`
+      // For MetaMask compatibility, create a transaction data object
+      // MetaMask can read QR codes containing transaction parameters
+      const transactionData = {
+        to: orderData.provider,
+        value: ethers.parseEther(orderData.amount).toString(),
+        data: ethers.hexlify(ethers.toUtf8Bytes(`Order ${orderId}: ${gigData.title}`)),
+        chainId: 296, // Hedera Testnet chain ID
+        gasLimit: "21000" // Standard transfer gas limit
+      }
       
-      // Create Hedera payment URI for HashPack wallet
-      const hbarAmount = orderData.amount
-      const hederaPaymentUrl = `hbar://pay?to=${orderData.provider}&amount=${hbarAmount}&memo=${encodeURIComponent(memo)}`
+      // Create a MetaMask-compatible transaction request
+      // Format: ethereum:0x<address>@<chainId>?value=<value>&data=<data>
+      const ethereumUri = `ethereum:${orderData.provider}@296?value=${transactionData.value}&data=${transactionData.data}`
       
-      // Generate QR code for the Hedera payment URI
-      const qrUrl = await QRCode.toDataURL(hederaPaymentUrl, {
+      // Generate QR code for the Ethereum URI (MetaMask compatible)
+      const qrUrl = await QRCode.toDataURL(ethereumUri, {
         width: 256,
         margin: 2,
         color: {
@@ -132,22 +138,28 @@ export default function PaymentPage() {
     }
   }
 
-  const copyHederaUri = async () => {
+  const copyMetaMaskUri = async () => {
     if (!order || !gig) return
     
-    const memo = `Order ${orderId}: ${gig.title}`
-    const hederaPaymentUrl = `hbar://pay?to=${order.provider}&amount=${order.amount}&memo=${encodeURIComponent(memo)}`
+    const transactionData = {
+      to: order.provider,
+      value: ethers.parseEther(order.amount).toString(),
+      data: ethers.hexlify(ethers.toUtf8Bytes(`Order ${orderId}: ${gig.title}`)),
+      chainId: 296
+    }
+    
+    const ethereumUri = `ethereum:${order.provider}@296?value=${transactionData.value}&data=${transactionData.data}`
 
     try {
-      await navigator.clipboard.writeText(hederaPaymentUrl)
+      await navigator.clipboard.writeText(ethereumUri)
       toast({
         title: "Copied!",
-        description: "Hedera payment URI copied to clipboard",
+        description: "MetaMask transaction URI copied to clipboard",
       })
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to copy Hedera URI",
+        description: "Failed to copy transaction URI",
         variant: "destructive",
       })
     }
@@ -247,22 +259,36 @@ export default function PaymentPage() {
               <CardTitle>Order Summary</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Service Details (from original gig) */}
               <div>
+                <div className="text-xs text-muted-foreground mb-1">Service Ordered:</div>
                 <h3 className="font-semibold text-lg">{gig.title}</h3>
                 <Badge variant="secondary" className="mt-1">
                   {gig.category}
                 </Badge>
               </div>
               
-              <p className="text-muted-foreground">{gig.description}</p>
+              <p className="text-muted-foreground text-sm">{gig.description}</p>
               
+              {/* Order Details */}
               <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground mb-2">ORDER DETAILS</div>
+                
                 <div className="flex justify-between">
-                  <span className="flex items-center gap-2">
-                    <Clock className="h-4 w-4" />
-                    Delivery Time:
+                  <span>Order ID:</span>
+                  <span className="font-mono text-sm">#{orderId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Order Created:</span>
+                  <span className="text-sm">
+                    {order.createdAt.toLocaleDateString()}
                   </span>
-                  <span>{gig.deliveryTime}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Client:</span>
+                  <span className="font-mono text-xs">
+                    {order.client.slice(0, 6)}...{order.client.slice(-4)}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="flex items-center gap-2">
@@ -274,26 +300,23 @@ export default function PaymentPage() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Order Created:</span>
-                  <span className="text-sm">
-                    {order.createdAt.toLocaleDateString()}
+                  <span className="flex items-center gap-2">
+                    <Clock className="h-4 w-4" />
+                    Expected Delivery:
                   </span>
+                  <span className="text-sm">{gig.deliveryTime}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Order ID:</span>
-                  <span className="font-mono text-sm">#{orderId}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Status:</span>
+                  <span>Payment Status:</span>
                   <Badge variant={order.isPaid ? "default" : "secondary"}>
                     {order.isPaid ? "Paid" : "Pending Payment"}
                   </Badge>
                 </div>
-                {order.isPaid && order.isCompleted && (
+                {order.isPaid && (
                   <div className="flex justify-between">
-                    <span>Payment Release:</span>
+                    <span>Escrow Status:</span>
                     <Badge variant={order.paymentReleased ? "default" : "secondary"}>
-                      {order.paymentReleased ? "Released" : "In Escrow"}
+                      {order.paymentReleased ? "Released to Provider" : "Held in Escrow"}
                     </Badge>
                   </div>
                 )}
@@ -302,9 +325,19 @@ export default function PaymentPage() {
               <Separator />
               
               <div className="flex justify-between text-lg font-semibold">
-                <span>Total Amount:</span>
+                <span>Order Amount:</span>
                 <span>{order.amount} HBAR</span>
               </div>
+              
+              {/* Show price comparison if different */}
+              {parseFloat(order.amount) !== parseFloat(gig.price) && (
+                <div className="text-sm text-muted-foreground">
+                  <div className="flex justify-between">
+                    <span>Original Gig Price:</span>
+                    <span>{gig.price} HBAR</span>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -319,7 +352,7 @@ export default function PaymentPage() {
             <CardContent className="space-y-6">
               {/* QR Code Section */}
               <div className="text-center">
-                <h3 className="font-semibold mb-4">Scan with HashPack</h3>
+                <h3 className="font-semibold mb-4">Scan with MetaMask</h3>
                 {qrCodeUrl && (
                   <div className="inline-block p-4 bg-white rounded-lg">
                     <img 
@@ -330,7 +363,7 @@ export default function PaymentPage() {
                   </div>
                 )}
                 <p className="text-sm text-muted-foreground mt-2">
-                  Open HashPack mobile app and scan this QR code
+                  Open MetaMask mobile app and scan this QR code to initiate payment
                 </p>
               </div>
 
@@ -338,21 +371,29 @@ export default function PaymentPage() {
 
               {/* Manual Payment Data */}
               <div>
-                <h3 className="font-semibold mb-2">Manual Payment</h3>
+                <h3 className="font-semibold mb-2">Manual Payment via MetaMask</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span>Send to:</span>
+                    <span>Recipient Address:</span>
                     <span className="font-mono text-xs">
                       {order.provider.slice(0, 10)}...{order.provider.slice(-6)}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Amount:</span>
+                    <span>Amount (Wei):</span>
+                    <span className="font-mono text-xs">{ethers.parseEther(order.amount).toString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Amount (HBAR):</span>
                     <span className="font-semibold">{order.amount} HBAR</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Memo:</span>
-                    <span className="text-xs">Order {orderId}</span>
+                    <span>Network:</span>
+                    <span className="text-xs">Hedera Testnet (Chain ID: 296)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Data (Memo):</span>
+                    <span className="text-xs">Order {orderId}: {gig.title.slice(0, 20)}...</span>
                   </div>
                 </div>
                 <div className="flex gap-2 mt-3">
@@ -366,11 +407,11 @@ export default function PaymentPage() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={copyHederaUri}
+                    onClick={copyMetaMaskUri}
                     className="flex-1"
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    Copy URI
+                    Copy MetaMask URI
                   </Button>
                 </div>
               </div>
