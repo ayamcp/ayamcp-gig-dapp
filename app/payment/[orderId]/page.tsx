@@ -1,6 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
+
+// Extend window interface for MetaMask
+declare global {
+  interface Window {
+    ethereum?: any;
+  }
+}
 import { useParams, useRouter } from "next/navigation"
 import QRCode from "qrcode"
 import { Header } from "@/components/header"
@@ -9,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { QrCode, Copy, ArrowLeft, CheckCircle, Loader2, Clock, User } from "lucide-react"
+import { QrCode, Copy, ArrowLeft, CheckCircle, Loader2, Clock, User, RefreshCw } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { contractService } from "@/lib/contract-service"
 import { CONTRACT_ADDRESS } from "@/lib/hedera-config"
@@ -38,7 +45,10 @@ export default function PaymentPage() {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("")
   const [isLoading, setIsLoading] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [paymentHash, setPaymentHash] = useState<string>("")
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
 
   useEffect(() => {
     if (orderId) {
@@ -46,13 +56,120 @@ export default function PaymentPage() {
     }
   }, [orderId])
 
-  const loadOrderData = async () => {
+  // Periodic status polling - checks every 15 seconds
+  useEffect(() => {
+    if (!orderId || !order) return
+
+    console.log(`[POLLING] Starting periodic status checks for Order ${orderId}`)
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        // Continue polling until payment is fully released (final state)
+        if (!order.paymentReleased) {
+          console.log(`[POLLING] Automatic status check for Order ${orderId}...`, {
+            currentState: {
+              isPaid: order.isPaid,
+              isCompleted: order.isCompleted,
+              paymentReleased: order.paymentReleased
+            },
+            timestamp: new Date().toISOString()
+          })
+          
+          const updatedOrder = await contractService.getOrder(parseInt(orderId))
+          
+          console.log(`[POLLING] Fetched updated status:`, {
+            newState: {
+              isPaid: updatedOrder.isPaid,
+              isCompleted: updatedOrder.isCompleted,
+              paymentReleased: updatedOrder.paymentReleased
+            },
+            hasChanged: (
+              updatedOrder.isPaid !== order.isPaid || 
+              updatedOrder.isCompleted !== order.isCompleted || 
+              updatedOrder.paymentReleased !== order.paymentReleased
+            ),
+            timestamp: new Date().toISOString()
+          })
+          
+          // Check if any status changed
+          if (updatedOrder.isPaid !== order.isPaid || 
+              updatedOrder.isCompleted !== order.isCompleted || 
+              updatedOrder.paymentReleased !== order.paymentReleased) {
+            
+            console.log(`[POLLING] ✅ STATUS CHANGED! Updating UI`, {
+              changes: {
+                isPaid: { from: order.isPaid, to: updatedOrder.isPaid },
+                isCompleted: { from: order.isCompleted, to: updatedOrder.isCompleted },
+                paymentReleased: { from: order.paymentReleased, to: updatedOrder.paymentReleased }
+              }
+            })
+            
+            setOrder(updatedOrder)
+            setLastUpdated(new Date())
+            
+            // Show appropriate notifications
+            if (updatedOrder.isPaid && !order.isPaid) {
+              toast({
+                title: "Payment Received!",
+                description: "Your payment has been confirmed on the blockchain.",
+              })
+            }
+            
+            if (updatedOrder.isCompleted && !order.isCompleted) {
+              toast({
+                title: "Work Completed!",
+                description: "The provider has marked this order as completed.",
+              })
+            }
+            
+            if (updatedOrder.paymentReleased && !order.paymentReleased) {
+              toast({
+                title: "Payment Released!",
+                description: "Payment has been released to the provider.",
+              })
+            }
+          } else {
+            console.log(`[POLLING] No changes detected for Order ${orderId}`)
+          }
+        } else {
+          console.log(`[POLLING] Order ${orderId} is complete (payment released), continuing to monitor`)
+        }
+      } catch (error) {
+        console.error("[POLLING] Error during status check:", error)
+      }
+    }, 15000) // Check every 15 seconds
+
+    return () => {
+      console.log(`[POLLING] Stopping periodic checks for Order ${orderId}`)
+      clearInterval(pollInterval)
+    }
+  }, [orderId, order?.isPaid, order?.isCompleted, order?.paymentReleased, toast])
+
+  const loadOrderData = async (isRefresh = false) => {
     try {
-      setIsLoading(true)
+      if (!isRefresh) setIsLoading(true)
+      
+      console.log(`[${isRefresh ? 'REFRESH' : 'LOAD'}] Fetching Order ${orderId} data...`, {
+        timestamp: new Date().toISOString(),
+        isRefresh
+      })
       
       // First get the order data
       const orderData = await contractService.getOrder(parseInt(orderId))
+      
+      console.log(`[${isRefresh ? 'REFRESH' : 'LOAD'}] Order ${orderId} status:`, {
+        isPaid: orderData.isPaid,
+        isCompleted: orderData.isCompleted,
+        paymentReleased: orderData.paymentReleased,
+        amount: orderData.amount,
+        client: orderData.client,
+        provider: orderData.provider,
+        createdAt: orderData.createdAt.toISOString(),
+        timestamp: new Date().toISOString()
+      })
+      
       setOrder(orderData)
+      setLastUpdated(new Date())
       
       // Then get the associated gig data
       if (orderData) {
@@ -71,27 +188,41 @@ export default function PaymentPage() {
         variant: "destructive",
       })
     } finally {
-      setIsLoading(false)
+      if (!isRefresh) setIsLoading(false)
     }
   }
 
   const generateQRCode = async (orderData: Order, gigData: GigData) => {
     try {
-      // For MetaMask compatibility, create a transaction data object
-      // MetaMask can read QR codes containing transaction parameters
+      // Create contract call data for payOrder function
+      // Get the correct function selector for payOrder(uint256)
+      const contractInterface = new ethers.Interface([
+        "function payOrder(uint256 _orderId) payable"
+      ])
+      const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
+      
+      // Create transaction data object for calling contract
       const transactionData = {
-        to: orderData.provider,
-        value: ethers.parseEther(orderData.amount).toString(),
-        data: ethers.hexlify(ethers.toUtf8Bytes(`Order ${orderId}: ${gigData.title}`)),
+        to: CONTRACT_ADDRESS, // Send to contract, not provider
+        value: ethers.parseEther(orderData.amount).toString(), // Payment amount
+        data: callData, // Encoded payOrder function call
         chainId: 296, // Hedera Testnet chain ID
-        gasLimit: "21000" // Standard transfer gas limit
+        gasLimit: "100000" // Higher gas limit for contract interaction
       }
       
-      // Create a MetaMask-compatible transaction request
-      // Format: ethereum:0x<address>@<chainId>?value=<value>&data=<data>
-      const ethereumUri = `ethereum:${orderData.provider}@296?value=${transactionData.value}&data=${transactionData.data}`
+      console.log('[QR Code] Generated contract call data:', {
+        contractAddress: CONTRACT_ADDRESS,
+        orderId: orderId,
+        amount: orderData.amount,
+        callData: callData,
+        provider: orderData.provider
+      })
       
-      // Generate QR code for the Ethereum URI (MetaMask compatible)
+      // Create a MetaMask-compatible transaction request for contract interaction
+      // Format: ethereum:0x<contractAddress>@<chainId>?value=<value>&data=<callData>
+      const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?value=${transactionData.value}&data=${transactionData.data}`
+      
+      // Generate QR code for the contract transaction
       const qrUrl = await QRCode.toDataURL(ethereumUri, {
         width: 256,
         margin: 2,
@@ -115,11 +246,21 @@ export default function PaymentPage() {
   const copyPaymentData = async () => {
     if (!order || !gig) return
 
+    // Create contract transaction data
+    const contractInterface = new ethers.Interface([
+      "function payOrder(uint256 _orderId) payable"
+    ])
+    const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
+
     const paymentData = {
-      recipient: order.provider,
+      type: "Contract Transaction",
+      contractAddress: CONTRACT_ADDRESS,
+      function: "payOrder",
+      orderId: orderId,
       amount: order.amount,
       currency: "HBAR",
-      memo: `Order ${orderId}: ${gig.title}`,
+      callData: callData,
+      description: `Payment for Order ${orderId}: ${gig.title}`,
       network: "Hedera Testnet"
     }
 
@@ -127,7 +268,7 @@ export default function PaymentPage() {
       await navigator.clipboard.writeText(JSON.stringify(paymentData, null, 2))
       toast({
         title: "Copied!",
-        description: "Payment data copied to clipboard",
+        description: "Contract transaction data copied to clipboard",
       })
     } catch (error) {
       toast({
@@ -141,20 +282,19 @@ export default function PaymentPage() {
   const copyMetaMaskUri = async () => {
     if (!order || !gig) return
     
-    const transactionData = {
-      to: order.provider,
-      value: ethers.parseEther(order.amount).toString(),
-      data: ethers.hexlify(ethers.toUtf8Bytes(`Order ${orderId}: ${gig.title}`)),
-      chainId: 296
-    }
+    // Create contract transaction URI
+    const contractInterface = new ethers.Interface([
+      "function payOrder(uint256 _orderId) payable"
+    ])
+    const callData = contractInterface.encodeFunctionData("payOrder", [parseInt(orderId)])
     
-    const ethereumUri = `ethereum:${order.provider}@296?value=${transactionData.value}&data=${transactionData.data}`
+    const ethereumUri = `ethereum:${CONTRACT_ADDRESS}@296?value=${ethers.parseEther(order.amount).toString()}&data=${callData}`
 
     try {
       await navigator.clipboard.writeText(ethereumUri)
       toast({
         title: "Copied!",
-        description: "MetaMask transaction URI copied to clipboard",
+        description: "Contract transaction URI copied to clipboard",
       })
     } catch (error) {
       toast({
@@ -162,6 +302,104 @@ export default function PaymentPage() {
         description: "Failed to copy transaction URI",
         variant: "destructive",
       })
+    }
+  }
+
+  // Manual refresh function
+  const handleManualRefresh = async () => {
+    try {
+      setIsRefreshing(true)
+      console.log(`[MANUAL REFRESH] User requested refresh for Order ${orderId}`)
+      
+      await loadOrderData(true) // Pass true to indicate this is a refresh
+      
+      toast({
+        title: "Status Updated",
+        description: "Order status has been refreshed.",
+      })
+      
+      console.log(`[MANUAL REFRESH] Refresh completed for Order ${orderId}`)
+    } catch (error) {
+      console.error("[MANUAL REFRESH] Error:", error)
+      toast({
+        title: "Refresh Failed",
+        description: "Failed to refresh order status. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  // MetaMask browser extension payment function
+  const payWithMetaMask = async () => {
+    if (!orderId || !order) return
+
+    try {
+      setIsProcessing(true)
+      console.log(`[METAMASK PAY] Starting MetaMask payment for Order ${orderId}`)
+      
+      // Check if MetaMask is available
+      if (typeof window.ethereum === 'undefined') {
+        toast({
+          title: "MetaMask Not Found",
+          description: "Please install MetaMask browser extension to continue.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      toast({
+        title: "Processing Payment",
+        description: "Please confirm the transaction in MetaMask...",
+      })
+
+      console.log(`[METAMASK PAY] Calling contractService.payOrder(${orderId})`)
+      
+      // Use the contract service's payOrder method - much cleaner!
+      const tx = await contractService.payOrder(parseInt(orderId))
+      
+      console.log(`[METAMASK PAY] Transaction submitted via contractService:`, tx.hash)
+      
+      toast({
+        title: "Transaction Submitted",
+        description: `Transaction hash: ${tx.hash.slice(0, 10)}...`,
+      })
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait()
+      
+      if (receipt?.status === 1) {
+        console.log(`[METAMASK PAY] Payment confirmed! Reloading order data`)
+        
+        // Reload order data to reflect payment
+        await loadOrderData(true)
+        
+        toast({
+          title: "Payment Successful! 🎉",
+          description: "Your payment has been confirmed and funds are held in escrow.",
+        })
+      } else {
+        throw new Error("Transaction failed")
+      }
+
+    } catch (error: any) {
+      console.error("[METAMASK PAY] Payment error:", error)
+      
+      let errorMessage = "Payment failed"
+      if (error.code === "ACTION_REJECTED" || error.code === 4001) {
+        errorMessage = "Transaction was rejected by user"
+      } else if (error.message) {
+        errorMessage = error.message
+      }
+
+      toast({
+        title: "Payment Failed",
+        description: errorMessage,
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
     }
   }
 
@@ -238,18 +476,52 @@ export default function PaymentPage() {
       <Header />
       <main className="container max-w-4xl mx-auto px-4 py-8">
         <div className="mb-6">
-          <Button
-            variant="ghost"
-            onClick={() => router.back()}
-            className="mb-4"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
+          <div className="flex items-center justify-between mb-4">
+            <Button
+              variant="ghost"
+              onClick={() => router.back()}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Button>
+            
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-muted-foreground">
+                Last updated: {lastUpdated.toLocaleTimeString()}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Refreshing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh Status
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+          
           <h1 className="text-3xl font-bold mb-2">Payment for Order #{orderId}</h1>
           <p className="text-muted-foreground">
             Complete your payment by scanning the QR code or using the payment details below
           </p>
+          
+          {/* Status indicator */}
+          <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-950 rounded-lg">
+            <p className="text-sm">
+              <strong>Auto-refresh:</strong> Status automatically updates every 15 seconds. 
+              Use the "Refresh Status" button above for immediate updates.
+            </p>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -338,6 +610,33 @@ export default function PaymentPage() {
                   </div>
                 </div>
               )}
+
+              {/* Primary Payment Button - MetaMask Browser Extension */}
+              {!order.isPaid && (
+                <>
+                  <Separator />
+                  <Button 
+                    onClick={payWithMetaMask}
+                    disabled={isProcessing}
+                    className="w-full"
+                    size="lg"
+                  >
+                    {isProcessing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Processing Payment...
+                      </>
+                    ) : (
+                      <>
+                        Pay {order.amount} HBAR Now
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Uses MetaMask browser extension
+                  </p>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -346,10 +645,16 @@ export default function PaymentPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <QrCode className="h-5 w-5" />
-                Payment Options
+                Alternative Payment Methods
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
+              {!order.isPaid && (
+                <div className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+                  <p><strong>Recommended:</strong> Use the "Pay Now" button above for direct browser payment.</p>
+                  <p className="mt-1">The methods below are for mobile wallets and manual transactions.</p>
+                </div>
+              )}
               {/* QR Code Section */}
               <div className="text-center">
                 <h3 className="font-semibold mb-4">Scan with MetaMask</h3>
@@ -363,7 +668,7 @@ export default function PaymentPage() {
                   </div>
                 )}
                 <p className="text-sm text-muted-foreground mt-2">
-                  Open MetaMask mobile app and scan this QR code to initiate payment
+                  Scan to call the contract's payOrder function with proper escrow
                 </p>
               </div>
 
@@ -371,29 +676,33 @@ export default function PaymentPage() {
 
               {/* Manual Payment Data */}
               <div>
-                <h3 className="font-semibold mb-2">Manual Payment via MetaMask</h3>
+                <h3 className="font-semibold mb-2">Contract Transaction Details</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span>Recipient Address:</span>
+                    <span>Contract Address:</span>
                     <span className="font-mono text-xs">
-                      {order.provider.slice(0, 10)}...{order.provider.slice(-6)}
+                      {CONTRACT_ADDRESS.slice(0, 10)}...{CONTRACT_ADDRESS.slice(-6)}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Amount (Wei):</span>
-                    <span className="font-mono text-xs">{ethers.parseEther(order.amount).toString()}</span>
+                    <span>Function:</span>
+                    <span className="font-mono text-xs">payOrder({orderId})</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Amount (HBAR):</span>
                     <span className="font-semibold">{order.amount} HBAR</span>
                   </div>
                   <div className="flex justify-between">
+                    <span>Amount (Wei):</span>
+                    <span className="font-mono text-xs">{ethers.parseEther(order.amount).toString()}</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span>Network:</span>
                     <span className="text-xs">Hedera Testnet (Chain ID: 296)</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Data (Memo):</span>
-                    <span className="text-xs">Order {orderId}: {gig.title.slice(0, 20)}...</span>
+                    <span>Escrow:</span>
+                    <span className="text-xs">Funds held until completion</span>
                   </div>
                 </div>
                 <div className="flex gap-2 mt-3">
@@ -403,7 +712,7 @@ export default function PaymentPage() {
                     className="flex-1"
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    Copy Payment Data
+                    Copy Contract Data
                   </Button>
                   <Button
                     variant="outline"
@@ -411,7 +720,7 @@ export default function PaymentPage() {
                     className="flex-1"
                   >
                     <Copy className="h-4 w-4 mr-2" />
-                    Copy MetaMask URI
+                    Copy Contract URI
                   </Button>
                 </div>
               </div>
