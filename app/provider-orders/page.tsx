@@ -287,7 +287,8 @@ export default function ProviderOrdersPage() {
   // Filter orders by status
   const pendingPaymentOrders = orders.filter(order => !order.isPaid)
   const inProgressOrders = orders.filter(order => order.isPaid && !order.isCompleted)
-  const completedOrders = orders.filter(order => order.isCompleted)
+  const completedOrders = orders.filter(order => order.isCompleted && !order.paymentReleased)
+  const paymentReleasedOrders = orders.filter(order => order.paymentReleased)
 
   if (isLoading) {
     return (
@@ -353,7 +354,7 @@ export default function ProviderOrdersPage() {
                   <div>
                     <p className="text-sm text-muted-foreground">Total Earnings</p>
                     <p className="text-2xl font-bold">
-                      {completedOrders.reduce((sum, order) => sum + parseFloat(order.amount), 0).toFixed(2)} HBAR
+                      {paymentReleasedOrders.reduce((sum, order) => sum + parseFloat(order.amount), 0).toFixed(2)} HBAR
                     </p>
                   </div>
                   <DollarSign className="h-8 w-8 text-muted-foreground" />
@@ -363,7 +364,7 @@ export default function ProviderOrdersPage() {
           </div>
 
           <Tabs defaultValue="in-progress" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="pending">
                 Pending Payment ({pendingPaymentOrders.length})
               </TabsTrigger>
@@ -371,7 +372,10 @@ export default function ProviderOrdersPage() {
                 In Progress ({inProgressOrders.length})
               </TabsTrigger>
               <TabsTrigger value="completed">
-                Completed ({completedOrders.length})
+                Awaiting Release ({completedOrders.length})
+              </TabsTrigger>
+              <TabsTrigger value="payment-released">
+                Payment Released ({paymentReleasedOrders.length})
               </TabsTrigger>
             </TabsList>
 
@@ -420,15 +424,35 @@ export default function ProviderOrdersPage() {
                 {completedOrders.length === 0 ? (
                   <Card>
                     <CardContent className="p-8 text-center">
-                      <CheckCircle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">No completed orders</h3>
+                      <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">No orders awaiting release</h3>
                       <p className="text-muted-foreground">
-                        Your completed orders will appear here
+                        Orders you've completed that are waiting for client payment release will appear here
                       </p>
                     </CardContent>
                   </Card>
                 ) : (
                   completedOrders.map((order) => (
+                    <OrderCard key={order.id} order={order} getOrderStatusBadge={getOrderStatusBadge} getOrderActions={getOrderActions} />
+                  ))
+                )}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="payment-released">
+              <div className="space-y-4">
+                {paymentReleasedOrders.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center">
+                      <DollarSign className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-semibold mb-2">No payments released yet</h3>
+                      <p className="text-muted-foreground">
+                        Orders where payment has been released to you will appear here
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  paymentReleasedOrders.map((order) => (
                     <OrderCard key={order.id} order={order} getOrderStatusBadge={getOrderStatusBadge} getOrderActions={getOrderActions} />
                   ))
                 )}
