@@ -27,6 +27,9 @@ export function Header() {
             <Link href="/orders" className="text-sm font-medium hover:text-primary transition-colors">
               Orders
             </Link>
+            <Link href="/provider-orders" className="text-sm font-medium hover:text-primary transition-colors">
+              Provider Dashboard
+            </Link>
             <Link href="/requests" className="text-sm font-medium hover:text-primary transition-colors">
               View Requests
             </Link>
@@ -54,6 +57,9 @@ export function Header() {
             </Link>
             <Link href="/orders" className="text-sm font-medium hover:text-primary transition-colors">
               Orders
+            </Link>
+            <Link href="/provider-orders" className="text-sm font-medium hover:text-primary transition-colors">
+              Provider Dashboard
             </Link>
             <Link href="/requests" className="text-sm font-medium hover:text-primary transition-colors">
               View Requests

@@ -333,7 +333,10 @@ export default function PaymentPage() {
 
   // MetaMask browser extension payment function
   const payWithMetaMask = async () => {
-    if (!orderId || !order) return
+    if (!orderId || !order) {
+      console.log(`[METAMASK PAY] Missing required data: orderId=${orderId}, order=${!!order}`)
+      return
+    }
 
     try {
       setIsProcessing(true)
@@ -341,12 +344,30 @@ export default function PaymentPage() {
       
       // Check if MetaMask is available
       if (typeof window.ethereum === 'undefined') {
+        console.log(`[METAMASK PAY] MetaMask not detected`)
         toast({
           title: "MetaMask Not Found",
           description: "Please install MetaMask browser extension to continue.",
           variant: "destructive",
         })
-        return
+        throw new Error("MetaMask not found")
+      }
+
+      // Check if user is connected to MetaMask
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' })
+        if (!accounts || accounts.length === 0) {
+          console.log(`[METAMASK PAY] No accounts connected, requesting connection`)
+          await window.ethereum.request({ method: 'eth_requestAccounts' })
+        }
+      } catch (connectionError) {
+        console.error(`[METAMASK PAY] Connection error:`, connectionError)
+        toast({
+          title: "Connection Failed",
+          description: "Please connect to MetaMask and try again.",
+          variant: "destructive",
+        })
+        throw connectionError
       }
 
       toast({
@@ -356,38 +377,67 @@ export default function PaymentPage() {
 
       console.log(`[METAMASK PAY] Calling contractService.payOrder(${orderId})`)
       
-      // Use the contract service's payOrder method - much cleaner!
-      const tx = await contractService.payOrder(parseInt(orderId))
-      
-      console.log(`[METAMASK PAY] Transaction submitted via contractService:`, tx.hash)
+      let tx
+      try {
+        // Use the contract service's payOrder method
+        tx = await contractService.payOrder(parseInt(orderId))
+        console.log(`[METAMASK PAY] Transaction submitted:`, tx.hash)
+      } catch (contractError) {
+        console.error(`[METAMASK PAY] Contract call failed:`, contractError)
+        throw contractError
+      }
       
       toast({
         title: "Transaction Submitted",
         description: `Transaction hash: ${tx.hash.slice(0, 10)}...`,
       })
 
-      // Wait for transaction confirmation
-      const receipt = await tx.wait()
+      // Wait for transaction confirmation with timeout
+      console.log(`[METAMASK PAY] Waiting for transaction confirmation...`)
+      let receipt
+      try {
+        receipt = await tx.wait()
+      } catch (waitError) {
+        console.error(`[METAMASK PAY] Error waiting for transaction:`, waitError)
+        toast({
+          title: "Transaction Pending",
+          description: "Transaction was submitted but confirmation is taking longer than expected. Please check your wallet.",
+        })
+        throw waitError
+      }
       
       if (receipt?.status === 1) {
-        console.log(`[METAMASK PAY] Payment confirmed! Reloading order data`)
+        console.log(`[METAMASK PAY] Payment confirmed! Receipt:`, receipt)
         
         // Reload order data to reflect payment
-        await loadOrderData(true)
+        try {
+          await loadOrderData(true)
+        } catch (reloadError) {
+          console.error(`[METAMASK PAY] Error reloading order data:`, reloadError)
+        }
         
         toast({
           title: "Payment Successful! 🎉",
           description: "Your payment has been confirmed and funds are held in escrow.",
         })
       } else {
-        throw new Error("Transaction failed")
+        console.log(`[METAMASK PAY] Transaction failed with status:`, receipt?.status)
+        throw new Error(`Transaction failed with status: ${receipt?.status}`)
       }
 
     } catch (error: any) {
       console.error("[METAMASK PAY] Payment error:", error)
       
-      let errorMessage = "Payment failed"
+      let errorMessage = "Payment failed. Please try again."
+      
+      // Handle specific error types
       if (error.code === "ACTION_REJECTED" || error.code === 4001) {
+        errorMessage = "Transaction was rejected by user"
+      } else if (error.code === "INSUFFICIENT_FUNDS" || error.message?.includes("insufficient funds")) {
+        errorMessage = "Insufficient funds for transaction"
+      } else if (error.code === "NETWORK_ERROR") {
+        errorMessage = "Network error. Please check your connection and try again."
+      } else if (error.message?.includes("user rejected")) {
         errorMessage = "Transaction was rejected by user"
       } else if (error.message) {
         errorMessage = error.message
@@ -399,6 +449,8 @@ export default function PaymentPage() {
         variant: "destructive",
       })
     } finally {
+      // Always reset processing state
+      console.log(`[METAMASK PAY] Resetting processing state`)
       setIsProcessing(false)
     }
   }

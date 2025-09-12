@@ -13,9 +13,10 @@ const CONTRACT_ABI = [
   "function orderGig(uint256 _gigId)",  // No longer payable
   "function payOrder(uint256 _orderId) payable",  // New payment function
   "function payOrderWithToken(uint256 _orderId)",  // Token payment function
-  "function completeOrder(uint256 _orderId)",
+  "function completeOrder(uint256 _orderId, string memory _deliverable)",
   "function releasePayment(uint256 _orderId)",
-  "function getOrder(uint256 _orderId) view returns (tuple(uint256 id, uint256 gigId, address client, address provider, uint256 amount, bool isCompleted, bool isPaid, bool paymentReleased, uint256 createdAt))",  // Added paymentReleased field
+  "function getOrder(uint256 _orderId) view returns (tuple(uint256 id, uint256 gigId, address client, address provider, uint256 amount, bool isCompleted, bool isPaid, bool paymentReleased, uint256 createdAt, uint256 paidAmount, string deliverable))",  // Added paidAmount and deliverable fields
+  "function getOrderDeliverable(uint256 _orderId) view returns (string memory)",
   
   // Query functions
   "function getProviderGigs(address _provider) view returns (uint256[])",
@@ -417,6 +418,37 @@ export class ContractService {
     return await contractWithSigner.payOrderWithToken(orderId)
   }
 
+  async completeOrder(orderId: number, deliverable: string): Promise<ethers.TransactionResponse> {
+    const contractWithSigner = await this.getContractWithSigner()
+    
+    console.log(`[CONTRACT SERVICE] CompleteOrder for order ${orderId} with deliverable:`, deliverable)
+    
+    return await contractWithSigner.completeOrder(orderId, deliverable)
+  }
+
+  async getProviderOrders(providerAddress: string): Promise<any[]> {
+    try {
+      const allOrderIds = await this.getAllOrders()
+      const providerOrders = []
+      
+      for (const orderId of allOrderIds) {
+        try {
+          const order = await this.getOrder(orderId)
+          if (order.provider.toLowerCase() === providerAddress.toLowerCase()) {
+            providerOrders.push(order)
+          }
+        } catch (error) {
+          console.error(`Error loading order ${orderId}:`, error)
+        }
+      }
+      
+      return providerOrders.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    } catch (error) {
+      console.error("Error getting provider orders:", error)
+      throw error
+    }
+  }
+
   async getOrder(orderId: number): Promise<any> {
     if (!this.contract) throw new Error("Contract not initialized")
     try {
@@ -429,11 +461,23 @@ export class ContractService {
         amount: ethers.formatEther(order.amount),
         isCompleted: order.isCompleted,
         isPaid: order.isPaid,
-        paymentReleased: order.paymentReleased,  // New field added
-        createdAt: new Date(Number(order.createdAt) * 1000)
+        paymentReleased: order.paymentReleased,
+        createdAt: new Date(Number(order.createdAt) * 1000),
+        paidAmount: ethers.formatEther(order.paidAmount),
+        deliverable: order.deliverable
       }
     } catch (error) {
       console.error("Error getting order:", error)
+      throw error
+    }
+  }
+
+  async getOrderDeliverable(orderId: number): Promise<string> {
+    if (!this.contract) throw new Error("Contract not initialized")
+    try {
+      return await this.contract.getOrderDeliverable(orderId)
+    } catch (error) {
+      console.error("Error getting order deliverable:", error)
       throw error
     }
   }
